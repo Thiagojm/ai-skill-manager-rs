@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 
 export type Harness = 'codex' | 'claude' | 'antigravity' | 'open_code'
 export type Theme = 'dark' | 'light'
@@ -47,6 +47,40 @@ export interface ScanResponse {
   warnings: string[]
 }
 
+export interface PreparedSkill {
+  folderName: string
+  linkWarnings: LinkWarning[]
+  warnings: string[]
+}
+
+export interface PrepareResponse {
+  token: string
+  eligible: PreparedSkill[]
+  skipped: string[]
+  destinationPath: string
+  warnings: string[]
+}
+
+export interface OperationEvent {
+  kind: 'progress' | 'result' | 'finished'
+  folderName: string | null
+  completed: number
+  total: number
+  success: boolean | null
+  message: string | null
+}
+
 export const loadSettings = () => invoke<SettingsResponse>('load_settings')
 export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings })
 export const scanSkills = (harness: Harness) => invoke<ScanResponse>('scan_skills', { harness })
+export const prepareInstall = (harness: Harness, revision: string, selected: string[]) =>
+  invoke<PrepareResponse>('prepare_install', { harness, revision, selected })
+export const executeInstall = (
+  token: string,
+  acknowledgeLinks: boolean,
+  onEvent: (event: OperationEvent) => void,
+) => {
+  const channel = new Channel<OperationEvent>()
+  channel.onmessage = onEvent
+  return invoke<void>('execute_install', { token, acknowledgeLinks, onEvent: channel })
+}

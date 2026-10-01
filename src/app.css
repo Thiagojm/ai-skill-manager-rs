@@ -104,6 +104,8 @@ h1, h2, h3, p { margin-top: 0; }
 .list-pane { min-width: 0; position: relative; border-right: 1px solid var(--border); }
 .list-toolbar { height: 62px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; }
 .list-toolbar > div { display: flex; align-items: baseline; gap: 10px; }
+.operation-actions { display: flex; align-items: center; gap: 8px; }
+.install-button { min-height: 32px; padding: 0 11px; font-size: 11px; }
 .list-toolbar h2 { margin: 0; font-size: 14px; font-weight: 650; }
 .result-count { color: var(--faint); font-size: 11px; }
 .filters { display: flex; gap: 9px; padding: 0 17px 14px; }
@@ -162,6 +164,25 @@ h1, h2, h3, p { margin-top: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 footer { display: flex; justify-content: space-between; padding: 18px 4px 25px; color: var(--faint); font-size: 10px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.operation-dialog { width: min(620px, calc(100vw - 32px)); max-height: min(82vh, 760px); margin: auto; padding: 25px; overflow: auto; color: var(--text); border: 1px solid var(--border); border-radius: 14px; background: var(--panel); box-shadow: 0 24px 80px #0008; }
+.operation-dialog::backdrop { background: #05080bd1; backdrop-filter: blur(3px); }
+.dialog-heading h2 { margin: 6px 0 10px; font-size: 20px; }
+.dialog-heading p { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+.dialog-heading > code { display: block; overflow-wrap: anywhere; color: var(--accent); font-size: 11px; }
+.dialog-warning, .dialog-skipped { margin-top: 14px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent); border-radius: 8px; color: var(--amber); font-size: 11px; line-height: 1.5; }
+.dialog-warning p, .dialog-skipped p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.install-list { max-height: 180px; overflow: auto; margin: 15px 0; padding: 0; list-style: none; }
+.install-list li { display: grid; gap: 5px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.install-list small { color: var(--muted); overflow-wrap: anywhere; }
+.install-list code { color: var(--accent); }
+.link-acknowledgement { display: flex; gap: 9px; align-items: flex-start; margin-top: 14px; color: var(--amber); font-size: 11px; line-height: 1.5; }
+.link-acknowledgement input { margin: 1px 0 0; accent-color: var(--accent-strong); }
+.operation-log { max-height: 170px; overflow: auto; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-raised); }
+.operation-log p { margin: 4px 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.operation-log p.failed, .dialog-error { color: var(--red); }
+.dialog-error { margin: 12px 0 0; font-size: 11px; }
+.dialog-actions { position: sticky; bottom: -25px; display: flex; justify-content: flex-end; gap: 9px; margin: 20px -25px -25px; padding: 12px 25px 20px; background: var(--panel); border-top: 1px solid var(--border); }
+.operation-progress { margin-right: auto; color: var(--accent); font-size: 12px; align-self: center; }
 
 @media (max-width: 1000px) {
   main { width: calc(100% - 36px); margin-top: 18px; }

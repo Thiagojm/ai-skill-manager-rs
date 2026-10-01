@@ -8,7 +8,7 @@ Use Tauri 2/Rust with Svelte/TypeScript/Vite/Tailwind. Rust owns filesystem beha
 
 ## Whole-folder identity and operations — accepted
 
-Folder name identifies a skill, case-insensitively on Windows. Metadata names do not merge folders. Compare the complete tree and use its contents, not timestamps. Install copies the whole folder; Update replaces it completely, including removing obsolete destination-only files. These mutation operations are future phases, not current behavior.
+Folder name identifies a skill, case-insensitively on Windows. Metadata names do not merge folders. Compare the complete tree and use its contents, not timestamps. Install copies the whole folder using verified staging. Update will replace it completely, including removing obsolete destination-only files, in Phase 3.
 
 ## Recoverable removal and links — accepted, pending implementation
 

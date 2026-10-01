@@ -47,6 +47,8 @@ pub struct SkillRow {
     pub error: Option<String>,
     pub differences: Vec<Difference>,
     pub link_warnings: Vec<LinkWarning>,
+    #[serde(skip)]
+    pub(crate) source_fingerprint: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -72,6 +74,10 @@ pub struct ScanResponse {
     pub destination_path: PathBuf,
     pub skills: Vec<SkillRow>,
     pub warnings: Vec<String>,
+    #[serde(skip)]
+    pub(crate) resolved_source_path: Option<PathBuf>,
+    #[serde(skip)]
+    pub(crate) resolved_destination_path: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -118,6 +124,8 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
     let destination = settings::configured_destination(settings, harness)
         .map(Path::to_path_buf)
         .ok_or_else(|| format!("No destination is configured for {}", harness.label()))?;
+    let resolved_source_path = source.as_deref().map(resolve_path).transpose()?;
+    let resolved_destination_path = resolve_path(&destination)?;
     let mut warnings = Vec::new();
     let mut source_skills = if let Some(path) = &source {
         read_source(path)?
@@ -152,6 +160,7 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
             error: None,
             differences: Vec::new(),
             link_warnings: Vec::new(),
+            source_fingerprint: None,
         };
 
         if source_skill.as_ref().is_some_and(|s| s.ambiguous)
@@ -193,6 +202,7 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
         match (&source_skill, &installed_skill) {
             (Some(_), Some(_)) => match (source_tree.unwrap(), installed_tree.unwrap()) {
                 (Ok(source_tree), Ok(installed_tree)) => {
+                    row.source_fingerprint = Some(tree_fingerprint(&source_tree));
                     let (equal, differences) = compare_trees(&source_tree, &installed_tree);
                     row.status = if equal { "identical" } else { "different" }.into();
                     row.differences = differences;
@@ -207,6 +217,7 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
             (Some(_), None) => match source_tree.unwrap() {
                 Ok(tree) => {
                     row.status = "missing".into();
+                    row.source_fingerprint = Some(tree_fingerprint(&tree));
                     row.link_warnings = tree.links;
                 }
                 Err(error) => {
@@ -261,6 +272,8 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
         destination_path: destination,
         skills,
         warnings,
+        resolved_source_path,
+        resolved_destination_path,
     })
 }
 
@@ -448,16 +461,235 @@ fn inventory(root: &Path) -> Result<TreeScan, String> {
             path: ".".into(),
             target: canonical.display().to_string(),
         });
-        result.entries.insert(
-            ".".into(),
-            Entry::Link {
-                target_is_dir: true,
-                content: None,
-            },
-        );
     }
     inventory_directory(&canonical, Path::new(""), &mut active, &mut result)?;
     Ok(result)
+}
+
+fn tree_fingerprint(tree: &TreeScan) -> String {
+    let mut hash = Sha256::new();
+    hash.update(format!("{:?}", tree.entries).as_bytes());
+    hash.update(format!("{:?}", tree.links).as_bytes());
+    format!("{:x}", hash.finalize())
+}
+
+pub(crate) fn fingerprint(path: &Path) -> Result<String, String> {
+    inventory(path).map(|tree| tree_fingerprint(&tree))
+}
+
+pub(crate) fn content_fingerprint(path: &Path) -> Result<String, String> {
+    let tree = inventory(path)?;
+    let mut normalized = BTreeMap::new();
+    for (path, entry) in tree.entries {
+        let entry = match entry {
+            Entry::Link {
+                target_is_dir: true,
+                ..
+            } => Entry::Directory,
+            Entry::Link {
+                content: Some(hash),
+                ..
+            } => Entry::File(hash),
+            other => other,
+        };
+        normalized.insert(path, entry);
+    }
+    let mut hash = Sha256::new();
+    hash.update(format!("{:?}", normalized).as_bytes());
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+pub(crate) fn paths_overlap(left: &Path, right: &Path) -> bool {
+    let left = path_key(&resolve_path(left).unwrap_or_else(|_| absolute_path(left)));
+    let right = path_key(&resolve_path(right).unwrap_or_else(|_| absolute_path(right)));
+    key_contains(&left, &right) || key_contains(&right, &left)
+}
+
+pub(crate) fn path_is_within(path: &Path, parent: &Path) -> bool {
+    let path = path_key(&resolve_path(path).unwrap_or_else(|_| absolute_path(path)));
+    let parent = path_key(&resolve_path(parent).unwrap_or_else(|_| absolute_path(parent)));
+    key_contains(&path, &parent)
+}
+
+fn key_contains(path: &str, parent: &str) -> bool {
+    Path::new(path).starts_with(Path::new(parent))
+}
+
+pub(crate) fn resolved_path(path: &Path) -> Result<PathBuf, String> {
+    resolve_path(path)
+}
+
+pub(crate) fn path_key_for_ops(path: &Path) -> String {
+    path_key(path)
+}
+
+pub(crate) fn is_link_or_reparse_path(path: &Path) -> Result<bool, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
+    is_link_or_reparse(path, &metadata)
+}
+
+fn resolve_path(path: &Path) -> Result<PathBuf, String> {
+    let absolute = absolute_path(path);
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    let mut candidate = normalized.clone();
+    let mut missing = Vec::new();
+    let base = loop {
+        match fs::canonicalize(&candidate) {
+            Ok(path) => break path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(name) = candidate.file_name().map(|name| name.to_os_string()) else {
+                    return Err(format!(
+                        "Could not resolve configured path {}: {error}",
+                        path.display()
+                    ));
+                };
+                missing.push(name);
+                if !candidate.pop() {
+                    return Err(format!(
+                        "Could not resolve configured path {}: {error}",
+                        path.display()
+                    ));
+                }
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Could not resolve configured path {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    };
+    Ok(missing
+        .into_iter()
+        .rev()
+        .fold(base, |path, part| path.join(part)))
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    }
+}
+
+pub(crate) fn copy_materialized(
+    source: &Path,
+    destination: &Path,
+    forbidden: &[PathBuf],
+) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(source)
+        .map_err(|error| format!("Could not inspect source {}: {error}", source.display()))?;
+    let real = if is_link_or_reparse(source, &metadata)? {
+        fs::canonicalize(source).map_err(|error| {
+            format!(
+                "Could not resolve source link {}: {error}",
+                source.display()
+            )
+        })?
+    } else {
+        fs::canonicalize(source)
+            .map_err(|error| format!("Could not resolve source {}: {error}", source.display()))?
+    };
+    reject_forbidden(&real, forbidden)?;
+    if !fs::metadata(&real)
+        .map_err(|error| format!("Could not inspect source {}: {error}", real.display()))?
+        .is_dir()
+    {
+        return Err(format!(
+            "Skill source is not a directory: {}",
+            source.display()
+        ));
+    }
+    let mut active = BTreeSet::from([path_key(&real)]);
+    copy_directory_contents(&real, destination, &mut active, forbidden)
+}
+
+fn reject_forbidden(path: &Path, forbidden: &[PathBuf]) -> Result<(), String> {
+    for root in forbidden {
+        let resolved = fs::canonicalize(root).unwrap_or_else(|_| absolute_path(root));
+        if paths_overlap(path, &resolved) {
+            return Err(format!(
+                "Link target {} overlaps protected path {}",
+                path.display(),
+                resolved.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn copy_directory_contents(
+    real: &Path,
+    output: &Path,
+    active: &mut BTreeSet<String>,
+    forbidden: &[PathBuf],
+) -> Result<(), String> {
+    let mut entries = fs::read_dir(real)
+        .map_err(|error| format!("Could not read {}: {error}", real.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not enumerate {}: {error}", real.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let source = entry.path();
+        let destination = output.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&source)
+            .map_err(|error| format!("Could not inspect {}: {error}", source.display()))?;
+        let is_link = is_link_or_reparse(&source, &metadata)?;
+        let resolved = if is_link || metadata.is_dir() {
+            Some(
+                fs::canonicalize(&source)
+                    .map_err(|error| format!("Could not resolve {}: {error}", source.display()))?,
+            )
+        } else {
+            None
+        };
+        if let Some(real_child) = resolved {
+            reject_forbidden(&real_child, forbidden)?;
+            let target_metadata = fs::metadata(&real_child)
+                .map_err(|error| format!("Could not inspect {}: {error}", real_child.display()))?;
+            if target_metadata.is_dir() {
+                let key = path_key(&real_child);
+                if !active.insert(key.clone()) {
+                    return Err(format!("Link cycle detected at {}", source.display()));
+                }
+                fs::create_dir(&destination).map_err(|error| {
+                    format!("Could not stage {}: {error}", destination.display())
+                })?;
+                let copied = copy_directory_contents(&real_child, &destination, active, forbidden);
+                active.remove(&key);
+                copied?;
+            } else if target_metadata.is_file() {
+                fs::copy(&real_child, &destination).map_err(|error| {
+                    format!("Could not stage {}: {error}", destination.display())
+                })?;
+            } else {
+                return Err(format!(
+                    "Unsupported filesystem entry at {}",
+                    source.display()
+                ));
+            }
+        } else if metadata.is_file() {
+            fs::copy(&source, &destination)
+                .map_err(|error| format!("Could not stage {}: {error}", destination.display()))?;
+        } else {
+            return Err(format!(
+                "Unsupported filesystem entry at {}",
+                source.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn inventory_directory(
@@ -832,7 +1064,40 @@ mod tests {
         let tree = inventory(&linked).unwrap();
         assert!(tree.links.iter().any(|warning| warning.path == "."));
         assert!(tree.entries.contains_key("data.txt"));
-        assert!(tree.entries.contains_key("."));
+        let plain = inventory(&target).unwrap();
+        assert!(compare_trees(&tree, &plain).0);
+
+        let output = temp.path().join("output");
+        fs::create_dir(&output).unwrap();
+        copy_materialized(&linked, &output, &[]).unwrap();
+        assert_eq!(fs::read(output.join("data.txt")).unwrap(), b"same");
+        assert!(fs::symlink_metadata(output.join("data.txt"))
+            .unwrap()
+            .is_file());
+    }
+
+    #[test]
+    fn materialized_external_directory_link_keeps_its_target_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let target = temp.path().join("external");
+        let output = temp.path().join("output");
+        fs::create_dir_all(source.join("Skill")).unwrap();
+        file(&target.join("nested/data.txt"), b"external contents");
+        link_dir(&target, &source.join("Skill").join("assets"));
+        fs::create_dir(&output).unwrap();
+
+        copy_materialized(&source.join("Skill"), &output, &[]).unwrap();
+        assert_eq!(
+            fs::read(output.join("assets/nested/data.txt")).unwrap(),
+            b"external contents"
+        );
+        let copied = output.join("assets");
+        assert!(!is_link_or_reparse(&copied, &fs::symlink_metadata(&copied).unwrap()).unwrap());
+        assert_eq!(
+            fs::read(target.join("nested/data.txt")).unwrap(),
+            b"external contents"
+        );
     }
 
     #[test]
@@ -887,5 +1152,18 @@ mod tests {
         } else {
             assert_ne!(identity_key("Skill"), identity_key("skill"));
         }
+    }
+
+    #[test]
+    fn overlap_resolves_missing_destination_below_a_linked_parent_and_volume_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let source = target.join("source");
+        fs::create_dir_all(&source).unwrap();
+        let alias = temp.path().join("alias");
+        link_dir(&target, &alias);
+        let missing_destination = alias.join("source").join("new").join("skills");
+        assert!(paths_overlap(&source, &missing_destination));
+        assert!(paths_overlap(&source, temp.path()));
     }
 }

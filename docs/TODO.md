@@ -3,19 +3,21 @@
 ## Completed checkpoint
 
 - Phase 1 read-only app is implemented and reviewed. Automated checks and 14 Rust tests passed on Windows on October 1, 2026.
-- Mocked browser interactions and native executable startup passed; the user accepted the checkpoint provisionally.
+- Mocked browser interactions and native executable startup passed. On October 1, 2026, the user reported manual Phase 1 testing looked OK and authorized Phase 2.
 - Approved design and plan are retained. Repository memory is initialized.
+- Phase 2 confirmed full-folder installation is implemented and reviewed. Frontend checks/build, Rust formatting/clippy/build, and 23 Rust tests passed on Windows on October 1, 2026.
+- Mocked Edge browser QA passed for batch confirmation/cancellation, link acknowledgement, disabled controls, partial results, refresh, source picker persistence, and themes. Real disposable Windows junction copies and target preservation passed in Rust tests.
 
 ## Current boundary
 
-- Phase 1 commit is explicitly authorized by the user. No remote is configured; push was deferred at the user's request.
-- Native picker and full desktop persistence tests remain unverified. Use disposable paths and the README instructions.
-- Phase 2 is not authorized; wait for an explicit implementation request.
+- Phase 1 is committed as `cf52e50`. The user subsequently configured `origin` at `https://github.com/Thiagojm/ai-skill-manager-rs.git` and reported publishing the repository.
+- Phase 1 native manual validation is user-reported; no direct interaction logs were collected.
+- On October 1, 2026, the user reported successful manual Phase 2 testing and authorized its commit/push and Phase 3 implementation. This is user-reported native evidence without detailed logs.
+- Phase 3 is authorized; stop after implementation for final user validation. Phase 3 commit/push and release actions remain unauthorized.
 
-## Next phase, when authorized
+## User validation gate
 
-- Implement Phase 2 of the [plan](plans/2026-10-01-ai-skill-manager-plan.md): confirmed full-folder installation, staging verification, stale/overlap safeguards, link confirmation, and per-skill batch results.
-- Stop again for user validation before Phase 3.
+- Implement Phase 3 according to the approved plan, then report automated and actual recycling evidence separately and stop for final user validation.
 
 ## Deferred scope
 

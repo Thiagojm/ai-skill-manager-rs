@@ -5,7 +5,11 @@
     loadSettings,
     saveSettings,
     scanSkills,
+    prepareInstall,
+    executeInstall,
     type Harness,
+    type OperationEvent,
+    type PrepareResponse,
     type ScanResponse,
     type Settings,
     type SkillRow,
@@ -29,6 +33,13 @@
   let focusedFolder = ''
   let loading = false
   let saving = false
+  let operationPreparing = false
+  let operationRunning = false
+  let operationError = ''
+  let operationEvents: OperationEvent[] = []
+  let preparedInstall: PrepareResponse | null = null
+  let acknowledgeLinks = false
+  let installDialog: HTMLDialogElement
   let scanSequence = 0
   let choosing = false
   let selections: Record<Harness, string[]> = {
@@ -43,6 +54,8 @@
   })
   $: focusedSkill = scan?.skills.find((skill) => skill.folderName === focusedFolder) ?? null
   $: selectedCount = selections[activeHarness].length
+  $: missingSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.status === 'missing')).length
+  $: controlsDisabled = choosing || saving || operationPreparing || operationRunning
   $: document.documentElement.dataset.theme = settings.theme
 
   onMount(async () => {
@@ -59,6 +72,7 @@
   })
 
   async function refresh() {
+    if (operationRunning || operationPreparing) return
     const sequence = ++scanSequence
     loading = true
     loadError = ''
@@ -81,7 +95,7 @@
   }
 
   async function chooseSource() {
-    if (choosing || saving) return
+    if (controlsDisabled) return
     choosing = true
     loadError = ''
     try {
@@ -95,7 +109,7 @@
   }
 
   async function chooseDestination() {
-    if (choosing || saving) return
+    if (controlsDisabled) return
     choosing = true
     loadError = ''
     try {
@@ -109,6 +123,7 @@
   }
 
   async function persist(next: Settings, changed: 'source' | 'destination' | 'theme') {
+    if (saving || operationPreparing || operationRunning) return
     saving = true
     loadError = ''
     try {
@@ -127,7 +142,7 @@
   }
 
   async function switchHarness(harness: Harness) {
-    if (harness === activeHarness || choosing || saving) return
+    if (harness === activeHarness || controlsDisabled) return
     activeHarness = harness
     search = ''
     statusFilter = 'all'
@@ -143,7 +158,7 @@
   }
 
   async function toggleTheme() {
-    if (choosing || saving) return
+    if (controlsDisabled) return
     await persist({ ...settings, theme: settings.theme === 'dark' ? 'light' : 'dark' }, 'theme')
   }
 
@@ -166,6 +181,64 @@
   function formatPath(path: string | null | undefined) {
     return path || 'Not configured'
   }
+
+  async function prepareInstallation() {
+    if (!scan || !missingSelectedCount || loading || controlsDisabled) return
+    operationPreparing = true
+    operationError = ''
+    try {
+      preparedInstall = await prepareInstall(activeHarness, scan.revision, selections[activeHarness])
+      acknowledgeLinks = false
+      operationEvents = []
+      installDialog.showModal()
+    } catch (error) {
+      loadError = String(error)
+    } finally {
+      operationPreparing = false
+    }
+  }
+
+  async function runInstallation() {
+    if (!preparedInstall || operationRunning) return
+    if (preparedInstall.eligible.some((skill) => skill.linkWarnings.length) && !acknowledgeLinks) return
+    operationRunning = true
+    operationError = ''
+    operationEvents = []
+    try {
+      await executeInstall(preparedInstall.token, acknowledgeLinks, (event) => {
+        operationEvents = [...operationEvents, event]
+      })
+      selections[activeHarness] = []
+    } catch (error) {
+      operationError = String(error)
+    } finally {
+      await refreshAfterOperation()
+      operationRunning = false
+    }
+  }
+
+  async function refreshAfterOperation() {
+    const sequence = ++scanSequence
+    loading = true
+    try {
+      const response = await scanSkills(activeHarness)
+      if (sequence === scanSequence) {
+        scan = response
+        focusedFolder = response.skills.some((skill) => skill.folderName === focusedFolder)
+          ? focusedFolder
+          : response.skills[0]?.folderName ?? ''
+      }
+    } catch (error) {
+      loadError = String(error)
+    } finally {
+      if (sequence === scanSequence) loading = false
+    }
+  }
+
+  function closeInstallDialog() {
+    if (!operationRunning && installDialog?.open) installDialog.close()
+    if (!operationRunning) preparedInstall = null
+  }
 </script>
 
 <svelte:head>
@@ -181,7 +254,7 @@
     </a>
     <div class="topbar-actions">
       <span class="local-indicator"><i></i> Local workspace</span>
-      <button class="icon-button" type="button" onclick={toggleTheme} disabled={choosing || saving} aria-label={settings.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} title="Change theme">
+      <button class="icon-button" type="button" onclick={toggleTheme} disabled={controlsDisabled} aria-label={settings.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} title="Change theme">
         {#if settings.theme === 'dark'}☼{:else}☾{/if}
       </button>
     </div>
@@ -196,7 +269,7 @@
         <p>Choose a parent folder. Each immediate subfolder is scanned as one skill.</p>
         <code class:empty={!settings.source}>{formatPath(settings.source)}</code>
       </div>
-      <button class="button button-primary" type="button" onclick={chooseSource} disabled={choosing || saving}>
+      <button class="button button-primary" type="button" onclick={chooseSource} disabled={controlsDisabled}>
         <span aria-hidden="true">＋</span> Choose folder…
       </button>
     </section>
@@ -233,7 +306,7 @@
                 document.getElementById(`tab-${next.id}`)?.focus()
               }
             }}
-            disabled={choosing || saving}
+            disabled={controlsDisabled}
           >
             <span class="harness-glyph" aria-hidden="true">{harness.id === 'codex' ? '◈' : harness.id === 'claude' ? '✳' : harness.id === 'antigravity' ? '◉' : '⌘'}</span>
             {harness.label}
@@ -243,7 +316,7 @@
 
       <div class="destination-bar">
         <div class="destination-label"><span class="eyebrow">Managed destination</span><code>{formatPath(scan?.destinationPath ?? settings.destinations[activeHarness])}</code></div>
-        <button class="button button-secondary" type="button" onclick={chooseDestination} disabled={choosing || saving}>Choose destination…</button>
+        <button class="button button-secondary" type="button" onclick={chooseDestination} disabled={controlsDisabled}>Choose destination…</button>
       </div>
 
       {#if scan?.warnings.length}
@@ -258,7 +331,10 @@
         <div class="list-pane">
           <div class="list-toolbar">
             <div><h2>Skills</h2><span class="result-count">{filteredSkills.length} {filteredSkills.length === 1 ? 'result' : 'results'}</span></div>
-            <button class="button button-quiet" type="button" onclick={refresh} disabled={loading} aria-label="Refresh comparison">↻ <span>Refresh</span></button>
+            <div class="operation-actions">
+              <button class="button button-primary install-button" type="button" onclick={prepareInstallation} disabled={!missingSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for installation">Install{selectedCount ? ` (${missingSelectedCount})` : ''}</button>
+              <button class="button button-quiet" type="button" onclick={refresh} disabled={loading || controlsDisabled} aria-label="Refresh comparison">↻ <span>Refresh</span></button>
+            </div>
           </div>
           <div class="filters">
             <label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Search skills</span><input bind:value={search} placeholder="Search skills…" /></label>
@@ -286,7 +362,7 @@
             <div class="skill-list" aria-label="Comparison results">
               {#each filteredSkills as skill (skill.folderName)}
                 <div class="skill-row" class:focused={focusedFolder === skill.folderName}>
-                  <input type="checkbox" checked={selections[activeHarness].includes(skill.folderName)} onchange={() => toggleSelection(skill)} aria-label="Select {skill.folderName}" />
+                  <input type="checkbox" checked={selections[activeHarness].includes(skill.folderName)} onchange={() => toggleSelection(skill)} aria-label="Select {skill.folderName}" disabled={controlsDisabled} />
                   <button class="skill-summary" type="button" onclick={() => focusedFolder = skill.folderName} aria-label="Show details for {skill.folderName}">
                     <span class="skill-title">{skill.name || skill.folderName}</span>
                     <span class="skill-folder">{skill.folderName}</span>
@@ -335,6 +411,54 @@
         </aside>
       </div>
     </section>
-    <footer><span>Read-only comparison</span><span>Files and scripts stay on this device</span></footer>
+    <footer><span>Local skill folder manager</span><span>Files and scripts stay on this device</span></footer>
   </main>
+
+  <dialog bind:this={installDialog} class="operation-dialog" aria-labelledby="install-title" oncancel={(event) => { if (operationRunning) event.preventDefault() }} onclose={() => { if (!operationRunning) preparedInstall = null }}>
+    {#if preparedInstall}
+      <div class="dialog-heading"><span class="eyebrow">Confirm installation</span><h2 id="install-title">Install complete skill folders?</h2>
+        <p>Selected folders will be copied to this destination:</p><code>{preparedInstall.destinationPath}</code>
+      </div>
+      {#if preparedInstall.warnings.length}
+        <div class="dialog-warning"><strong>Review these warnings</strong>
+          {#each preparedInstall.warnings as warning}<p>{warning}</p>{/each}
+        </div>
+      {/if}
+      <ul class="install-list">
+        {#each preparedInstall.eligible as skill (skill.folderName)}
+          <li><strong>{skill.folderName}</strong>
+            {#each skill.warnings as warning}<small>{warning}</small>{/each}
+            {#each skill.linkWarnings as link}<small><code>{link.path}</code> points to <code>{link.target}</code></small>{/each}
+          </li>
+        {/each}
+      </ul>
+      {#if preparedInstall.skipped.length}
+        <div class="dialog-skipped"><strong>Skipped selections</strong>{#each preparedInstall.skipped as item}<p>{item}</p>{/each}</div>
+      {/if}
+      {#if preparedInstall.eligible.some((skill) => skill.linkWarnings.length)}
+        <label class="link-acknowledgement"><input type="checkbox" bind:checked={acknowledgeLinks} disabled={operationRunning} /> I understand that linked content will be copied as ordinary files and folders.</label>
+      {/if}
+      {#if operationEvents.length}
+        <div class="operation-log" role="log" aria-live="polite">
+          {#each operationEvents as event, index (`${index}-${event.kind}`)}
+            <p class:failed={event.success === false}>{event.folderName ? `${event.folderName}: ` : ''}{event.message}</p>
+          {/each}
+        </div>
+      {/if}
+      {#if operationError}<p class="dialog-error" role="alert">{operationError}</p>{/if}
+      <div class="dialog-actions">
+        {#if operationRunning}
+          {@const current = [...operationEvents].reverse().find((event) => event.kind === 'progress')}
+          <span class="operation-progress" aria-live="polite">{current?.folderName ? `Installing ${current.folderName}` : 'Installing'} ({current?.completed ?? 0}/{current?.total ?? preparedInstall.eligible.length})</span>
+        {:else if operationEvents.some((event) => event.kind === 'finished')}
+          <button class="button button-primary" type="button" onclick={closeInstallDialog}>Done</button>
+        {:else if operationError}
+          <button class="button button-secondary" type="button" onclick={closeInstallDialog}>Close and refresh</button>
+        {:else}
+          <button class="button button-secondary" type="button" onclick={closeInstallDialog}>Cancel</button>
+          <button class="button button-primary" type="button" onclick={runInstallation} disabled={preparedInstall.eligible.some((skill) => skill.linkWarnings.length) && !acknowledgeLinks}>Confirm install</button>
+        {/if}
+      </div>
+    {/if}
+  </dialog>
 </div>
