@@ -1,6 +1,6 @@
 # AI Skill Manager — v1 Design Specification
 
-Status: Approved by the user on October 1, 2026. Approval includes automatic persistence of the last selected source and a permanent `Choose folder…` control. Implementation is not authorized.
+Status: Approved by the user on October 1, 2026. Approval includes automatic persistence of the last selected source and a permanent `Choose folder…` control. Phase 1 was subsequently authorized, implemented, and provisionally accepted; later phases require separate authorization. See [current work status](../TODO.md).
 
 ## Goal and boundaries
 

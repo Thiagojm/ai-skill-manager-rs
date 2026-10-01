@@ -1,0 +1,17 @@
+# JavaScript dependencies and build output
+node_modules/
+/dist/
+vite.config.*.timestamp-*
+
+# Local configuration
+.DS_Store
+/.vscode/
+.env
+.env.*
+!.env.example
+
+# Unused scaffold leftovers; cleanup was blocked by shell policy.
+/.vite-template/
+/static/
+
+# Rust/Tauri generated output is covered by src-tauri/.gitignore.
