@@ -37,9 +37,10 @@ async fn scan_skills(
 }
 
 #[tauri::command]
-async fn prepare_install(
+async fn prepare_operation(
     app: tauri::AppHandle,
     harness: manager::Harness,
+    action: operations::OperationAction,
     revision: String,
     selected: Vec<String>,
 ) -> Result<operations::PrepareResponse, String> {
@@ -49,14 +50,14 @@ async fn prepare_install(
         if let Some(error) = response.error {
             return Err(error);
         }
-        operations::prepare(&response.settings, harness, &revision, &selected)
+        operations::prepare_operation(&response.settings, harness, &revision, action, &selected)
     })
     .await
-    .map_err(|error| format!("Installation preparation could not finish: {error}"))?
+    .map_err(|error| format!("Operation preparation could not finish: {error}"))?
 }
 
 #[tauri::command]
-async fn execute_install(
+async fn execute_operation(
     app: tauri::AppHandle,
     token: String,
     acknowledge_links: bool,
@@ -71,7 +72,7 @@ async fn execute_install(
         operations::execute_locked(&token, &response.settings, acknowledge_links, on_event)
     })
     .await
-    .map_err(|error| format!("Installation could not finish: {error}"))?
+    .map_err(|error| format!("Operation could not finish: {error}"))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -82,8 +83,8 @@ pub fn run() {
             load_settings,
             save_settings,
             scan_skills,
-            prepare_install,
-            execute_install
+            prepare_operation,
+            execute_operation
         ])
         .on_window_event(|_, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

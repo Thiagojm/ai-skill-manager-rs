@@ -28,7 +28,7 @@ Use `npm.cmd ci` to restore locked dependencies. Use `npm.cmd run tauri dev` for
 - Prefer standard library functions and the smallest working change. Keep filesystem logic testable without Tauri UI.
 - Automated filesystem tests use disposable paths and must never modify real harness installations.
 - Distinguish automated, mocked browser, native startup, native interaction, and recycling evidence.
-- Stop at each planned phase for user validation and explicit authorization. The user accepted Phase 2 and authorized its commit/push and Phase 3 on October 1, 2026. Phase 3 commit/push remains unauthorized.
+- Stop at each planned phase for user validation and explicit authorization. The user accepted Phase 3 and authorized its commit/push on October 1, 2026. All three planned phases are complete; further work requires a defined scope. Packaging and release actions remain separately gated.
 - Commit/push, packaging, signing, publishing, and production changes require explicit authorization for their scope.
 - Keep Cargo/npm lockfiles versioned. Keep generated output and local configuration out of Git.
 

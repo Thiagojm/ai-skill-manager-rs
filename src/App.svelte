@@ -5,8 +5,9 @@
     loadSettings,
     saveSettings,
     scanSkills,
-    prepareInstall,
-    executeInstall,
+    prepareOperation,
+    executeOperation,
+    type OperationAction,
     type Harness,
     type OperationEvent,
     type PrepareResponse,
@@ -54,7 +55,9 @@
   })
   $: focusedSkill = scan?.skills.find((skill) => skill.folderName === focusedFolder) ?? null
   $: selectedCount = selections[activeHarness].length
-  $: missingSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.status === 'missing')).length
+  $: installSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('install'))).length
+  $: updateSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('update'))).length
+  $: uninstallSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('uninstall'))).length
   $: controlsDisabled = choosing || saving || operationPreparing || operationRunning
   $: document.documentElement.dataset.theme = settings.theme
 
@@ -182,12 +185,13 @@
     return path || 'Not configured'
   }
 
-  async function prepareInstallation() {
-    if (!scan || !missingSelectedCount || loading || controlsDisabled) return
+  async function prepareAction(action: OperationAction) {
+    const eligibleCount = action === 'install' ? installSelectedCount : action === 'update' ? updateSelectedCount : uninstallSelectedCount
+    if (!scan || !eligibleCount || loading || controlsDisabled) return
     operationPreparing = true
     operationError = ''
     try {
-      preparedInstall = await prepareInstall(activeHarness, scan.revision, selections[activeHarness])
+      preparedInstall = await prepareOperation(action, activeHarness, scan.revision, selections[activeHarness])
       acknowledgeLinks = false
       operationEvents = []
       installDialog.showModal()
@@ -198,14 +202,14 @@
     }
   }
 
-  async function runInstallation() {
+  async function runOperation() {
     if (!preparedInstall || operationRunning) return
     if (preparedInstall.eligible.some((skill) => skill.linkWarnings.length) && !acknowledgeLinks) return
     operationRunning = true
     operationError = ''
     operationEvents = []
     try {
-      await executeInstall(preparedInstall.token, acknowledgeLinks, (event) => {
+      await executeOperation(preparedInstall.token, acknowledgeLinks, (event) => {
         operationEvents = [...operationEvents, event]
       })
       selections[activeHarness] = []
@@ -332,7 +336,9 @@
           <div class="list-toolbar">
             <div><h2>Skills</h2><span class="result-count">{filteredSkills.length} {filteredSkills.length === 1 ? 'result' : 'results'}</span></div>
             <div class="operation-actions">
-              <button class="button button-primary install-button" type="button" onclick={prepareInstallation} disabled={!missingSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for installation">Install{selectedCount ? ` (${missingSelectedCount})` : ''}</button>
+              <button class="button button-primary install-button" type="button" onclick={() => prepareAction('install')} disabled={!installSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for installation">Install{installSelectedCount ? ` (${installSelectedCount})` : ''}</button>
+              <button class="button button-secondary install-button" type="button" onclick={() => prepareAction('update')} disabled={!updateSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for update">Update{updateSelectedCount ? ` (${updateSelectedCount})` : ''}</button>
+              <button class="button button-quiet install-button" type="button" onclick={() => prepareAction('uninstall')} disabled={!uninstallSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for uninstallation">Uninstall{uninstallSelectedCount ? ` (${uninstallSelectedCount})` : ''}</button>
               <button class="button button-quiet" type="button" onclick={refresh} disabled={loading || controlsDisabled} aria-label="Refresh comparison">↻ <span>Refresh</span></button>
             </div>
           </div>
@@ -416,9 +422,12 @@
 
   <dialog bind:this={installDialog} class="operation-dialog" aria-labelledby="install-title" oncancel={(event) => { if (operationRunning) event.preventDefault() }} onclose={() => { if (!operationRunning) preparedInstall = null }}>
     {#if preparedInstall}
-      <div class="dialog-heading"><span class="eyebrow">Confirm installation</span><h2 id="install-title">Install complete skill folders?</h2>
-        <p>Selected folders will be copied to this destination:</p><code>{preparedInstall.destinationPath}</code>
+      <div class="dialog-heading"><span class="eyebrow">Confirm {preparedInstall.action}</span><h2 id="install-title">{preparedInstall.action === 'install' ? 'Install complete skill folders?' : preparedInstall.action === 'update' ? 'Replace complete skill folders?' : 'Move skill folders to the Recycle Bin?'}</h2>
+        <p>{preparedInstall.action === 'install' ? 'Selected folders will be copied to this destination:' : preparedInstall.action === 'update' ? 'The existing complete folders will move to the Recycle Bin before replacements are placed:' : 'Selected complete folders will move to the Windows Recycle Bin from:'}</p><code>{preparedInstall.destinationPath}</code>
       </div>
+      {#if preparedInstall.action !== 'install'}
+        <div class="dialog-warning"><strong>Recovery and refresh</strong><p>Windows controls Recycle Bin retention. Restore items manually from Recycle Bin; external harnesses may need a refresh or restart.</p></div>
+      {/if}
       {#if preparedInstall.warnings.length}
         <div class="dialog-warning"><strong>Review these warnings</strong>
           {#each preparedInstall.warnings as warning}<p>{warning}</p>{/each}
@@ -436,7 +445,7 @@
         <div class="dialog-skipped"><strong>Skipped selections</strong>{#each preparedInstall.skipped as item}<p>{item}</p>{/each}</div>
       {/if}
       {#if preparedInstall.eligible.some((skill) => skill.linkWarnings.length)}
-        <label class="link-acknowledgement"><input type="checkbox" bind:checked={acknowledgeLinks} disabled={operationRunning} /> I understand that linked content will be copied as ordinary files and folders.</label>
+        <label class="link-acknowledgement"><input type="checkbox" bind:checked={acknowledgeLinks} disabled={operationRunning} /> I reviewed the listed links and junctions. Copies materialize linked content; recycling removes link entries while preserving their targets.</label>
       {/if}
       {#if operationEvents.length}
         <div class="operation-log" role="log" aria-live="polite">
@@ -449,14 +458,14 @@
       <div class="dialog-actions">
         {#if operationRunning}
           {@const current = [...operationEvents].reverse().find((event) => event.kind === 'progress')}
-          <span class="operation-progress" aria-live="polite">{current?.folderName ? `Installing ${current.folderName}` : 'Installing'} ({current?.completed ?? 0}/{current?.total ?? preparedInstall.eligible.length})</span>
+          <span class="operation-progress" aria-live="polite">{current?.folderName ? `${preparedInstall.action} ${current.folderName}` : preparedInstall.action} ({current?.completed ?? 0}/{current?.total ?? preparedInstall.eligible.length})</span>
         {:else if operationEvents.some((event) => event.kind === 'finished')}
           <button class="button button-primary" type="button" onclick={closeInstallDialog}>Done</button>
         {:else if operationError}
           <button class="button button-secondary" type="button" onclick={closeInstallDialog}>Close and refresh</button>
         {:else}
           <button class="button button-secondary" type="button" onclick={closeInstallDialog}>Cancel</button>
-          <button class="button button-primary" type="button" onclick={runInstallation} disabled={preparedInstall.eligible.some((skill) => skill.linkWarnings.length) && !acknowledgeLinks}>Confirm install</button>
+          <button class="button button-primary" type="button" onclick={runOperation} disabled={preparedInstall.eligible.some((skill) => skill.linkWarnings.length) && !acknowledgeLinks}>Confirm {preparedInstall.action}</button>
         {/if}
       </div>
     {/if}

@@ -8,9 +8,9 @@ Use Tauri 2/Rust with Svelte/TypeScript/Vite/Tailwind. Rust owns filesystem beha
 
 ## Whole-folder identity and operations — accepted
 
-Folder name identifies a skill, case-insensitively on Windows. Metadata names do not merge folders. Compare the complete tree and use its contents, not timestamps. Install copies the whole folder using verified staging. Update will replace it completely, including removing obsolete destination-only files, in Phase 3.
+Folder name identifies a skill, case-insensitively on Windows. Metadata names do not merge folders. Compare the complete tree and use its contents, not timestamps. Install copies the whole folder using verified staging. Update replaces it completely, including removing obsolete destination-only files.
 
-## Recoverable removal and links — accepted, pending implementation
+## Recoverable removal and links — accepted and implemented
 
 Updates and uninstallations send the old complete folder to Windows Recycle Bin. Recycling failure has no permanent-delete fallback. Links/junctions warn and allow the user to continue or cancel; confirmed copies materialize their content, while removal must preserve external targets. The detailed overlap, stale-input, staging, and recovery contracts are in the design and Phase 2/3 plan.
 
@@ -21,3 +21,7 @@ Remember the last successfully selected accessible source automatically and keep
 ## Phased delivery — accepted
 
 Deliver read-only comparison, then installation, then replacement/removal. Each phase stops for user validation and explicit authorization. Acceptance or commit/push of Phase 1 does not authorize later phases or release actions.
+
+## Windows recycling — implementation safeguard
+
+Use Windows `IFileOperation` with an absolute lexical item path and explicit recycle-on-delete flags. The generic `trash` Windows implementation canonicalizes the item path, which can follow a skill-root junction; its undo/warning flags also do not express the required force-recycle contract. Never resolve the final skill entry to its external target before recycling. Native disposable recycling and restoration evidence must remain separate from injected unit tests and desktop interaction evidence.

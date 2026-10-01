@@ -1,5 +1,6 @@
 use crate::manager::{self, Harness, LinkWarning, ScanResponse};
 use crate::settings::{self, Settings};
+use serde::Deserialize;
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -19,7 +20,7 @@ static GENERATION: AtomicU64 = AtomicU64::new(1);
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static EXECUTION: OnceLock<Mutex<()>> = OnceLock::new();
 static SCANS: OnceLock<Mutex<HashMap<String, ScanBaseline>>> = OnceLock::new();
-static PLANS: OnceLock<Mutex<HashMap<String, InstallPlan>>> = OnceLock::new();
+static PLANS: OnceLock<Mutex<HashMap<String, ManagePlan>>> = OnceLock::new();
 
 #[derive(Clone)]
 struct SkillBaseline {
@@ -37,16 +38,40 @@ struct ScanBaseline {
     destination_resolved: PathBuf,
     warnings: Vec<String>,
     skills: HashMap<String, SkillBaseline>,
+    installed: HashMap<String, InstalledBaseline>,
 }
 
 #[derive(Clone)]
-struct InstallPlan {
+struct InstalledBaseline {
+    folder_name: String,
+    path: PathBuf,
+    fingerprint: String,
+    links: Vec<LinkWarning>,
+    warnings: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationAction {
+    Install,
+    Update,
+    Uninstall,
+}
+
+#[derive(Clone)]
+struct ManageItem {
+    folder_name: String,
+    source: Option<SkillBaseline>,
+    installed: Option<InstalledBaseline>,
+}
+
+#[derive(Clone)]
+struct ManagePlan {
+    action: OperationAction,
     harness: Harness,
-    source_setting: PathBuf,
-    source_parent: PathBuf,
     destination_resolved: PathBuf,
-    destination_setting: PathBuf,
-    skills: Vec<SkillBaseline>,
+    source_parent: Option<PathBuf>,
+    items: Vec<ManageItem>,
     warnings: Vec<LinkWarning>,
 }
 
@@ -62,6 +87,7 @@ pub struct PreparedSkill {
 #[serde(rename_all = "camelCase")]
 pub struct PrepareResponse {
     pub token: String,
+    pub action: OperationAction,
     pub eligible: Vec<PreparedSkill>,
     pub skipped: Vec<String>,
     pub destination_path: PathBuf,
@@ -116,7 +142,7 @@ pub fn record_scan(scan: &ScanResponse, generation: u64) {
         .skills
         .iter()
         .filter_map(|row| {
-            if row.status != "missing" {
+            if !matches!(row.status.as_str(), "missing" | "different") {
                 return None;
             }
             Some((
@@ -125,8 +151,28 @@ pub fn record_scan(scan: &ScanResponse, generation: u64) {
                     folder_name: row.folder_name.clone(),
                     source: scan.resolved_source_path.as_ref()?.join(&row.folder_name),
                     fingerprint: row.source_fingerprint.clone()?,
-                    links: row.link_warnings.clone(),
+                    links: row.source_link_warnings.clone(),
                     warnings: row.warnings.clone(),
+                },
+            ))
+        })
+        .collect();
+    let installed = scan
+        .skills
+        .iter()
+        .filter_map(|row| {
+            let mut warnings = row.warnings.clone();
+            if let Some(error) = &row.error {
+                warnings.push(error.clone());
+            }
+            Some((
+                identity_key(&row.folder_name),
+                InstalledBaseline {
+                    folder_name: row.folder_name.clone(),
+                    path: row.destination_path.clone()?,
+                    fingerprint: row.destination_fingerprint.clone()?,
+                    links: row.destination_link_warnings.clone(),
+                    warnings,
                 },
             ))
         })
@@ -139,14 +185,16 @@ pub fn record_scan(scan: &ScanResponse, generation: u64) {
             destination_resolved: scan.resolved_destination_path.clone(),
             warnings: scan.warnings.clone(),
             skills,
+            installed,
         },
     );
 }
 
-pub fn prepare(
+pub fn prepare_operation(
     settings_now: &Settings,
     harness: Harness,
     revision: &str,
+    action: OperationAction,
     selected: &[String],
 ) -> Result<PrepareResponse, String> {
     let baseline = scans()
@@ -160,28 +208,31 @@ pub fn prepare(
     if baseline.harness != harness {
         return Err("This comparison belongs to another harness. Refresh and try again.".into());
     }
-    let source_parent = baseline.source_parent.clone().ok_or_else(|| {
-        "Choose an accessible source folder before installing skills.".to_string()
-    })?;
     let destination = settings::configured_destination(settings_now, harness)
         .map(Path::to_path_buf)
         .ok_or_else(|| "No destination is configured for this harness.".to_string())?;
     let destination_resolved = manager::resolved_path(&destination)?;
-    if !resolves_to(settings_now.source.as_deref(), &source_parent)
-        || manager::path_key_for_ops(&destination_resolved)
-            != manager::path_key_for_ops(&baseline.destination_resolved)
+    if manager::path_key_for_ops(&destination_resolved)
+        != manager::path_key_for_ops(&baseline.destination_resolved)
     {
         return Err(
-            "Source or destination settings changed after this scan. Refresh and confirm again."
-                .into(),
+            "Destination settings changed after this scan. Refresh and confirm again.".into(),
         );
     }
-    if manager::paths_overlap(&source_parent, &destination_resolved) {
-        return Err(
-            "Source and destination overlap. Choose separate folders before installing.".into(),
-        );
-    }
-
+    let needs_source = !matches!(action, OperationAction::Uninstall);
+    let source_parent = if needs_source {
+        let source = baseline.source_parent.clone().ok_or_else(|| {
+            "Choose an accessible source folder before this operation.".to_string()
+        })?;
+        if !resolves_to(settings_now.source.as_deref(), &source)
+            || manager::paths_overlap(&source, &destination_resolved)
+        {
+            return Err("Source or destination changed or overlaps after this scan. Refresh and confirm again.".into());
+        }
+        Some(source)
+    } else {
+        None
+    };
     let mut eligible = Vec::new();
     let mut skipped = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -190,75 +241,145 @@ pub fn prepare(
         if !seen.insert(key.clone()) {
             continue;
         }
-        let Some(skill) = baseline.skills.get(&key).cloned() else {
+        let installed = baseline.installed.get(&key).cloned();
+        if matches!(action, OperationAction::Uninstall) && installed.is_none() {
             skipped.push(format!("{name} (not eligible in this scan)"));
             continue;
-        };
-        if manager::paths_overlap(&skill.source, &destination_resolved) {
-            return Err(format!(
-                "Source skill {} overlaps the destination.",
-                skill.folder_name
-            ));
         }
-        for warning in &skill.links {
-            let target = PathBuf::from(&warning.target);
-            if manager::paths_overlap(&target, &destination_resolved) {
+        if matches!(action, OperationAction::Update) && installed.is_none() {
+            skipped.push(format!("{name} (not installed)"));
+            continue;
+        }
+        if matches!(action, OperationAction::Install) && installed.is_some() {
+            skipped.push(format!("{name} (already installed)"));
+            continue;
+        }
+        let source = if needs_source {
+            let Some(source) = baseline.skills.get(&key).cloned() else {
+                skipped.push(format!("{name} (source is invalid or unavailable)"));
+                continue;
+            };
+            if manager::fingerprint(&source.source).ok().as_deref() != Some(&source.fingerprint) {
                 return Err(format!(
-                    "Link in {} targets the destination tree.",
-                    skill.folder_name
+                    "{} changed after the comparison. Refresh and confirm again.",
+                    source.folder_name
+                ));
+            }
+            Some(source)
+        } else {
+            None
+        };
+        if let Some(installed) = &installed {
+            if manager::operation_fingerprint(&installed.path)
+                .ok()
+                .as_deref()
+                != Some(&installed.fingerprint)
+            {
+                return Err(format!(
+                    "{} changed after the comparison. Refresh and confirm again.",
+                    installed.folder_name
                 ));
             }
         }
-        if manager::fingerprint(&skill.source)? != skill.fingerprint {
-            return Err(format!(
-                "{} changed after the comparison. Refresh and confirm again.",
-                skill.folder_name
-            ));
+        if let Some(source) = &source {
+            if manager::paths_overlap(&source.source, &destination_resolved) {
+                return Err(format!(
+                    "Source skill {} overlaps the destination.",
+                    source.folder_name
+                ));
+            }
+            for warning in &source.links {
+                if manager::paths_overlap(Path::new(&warning.target), &destination_resolved) {
+                    return Err(format!(
+                        "Link in {} targets the destination tree.",
+                        source.folder_name
+                    ));
+                }
+            }
         }
-        if fs::symlink_metadata(destination_resolved.join(&skill.folder_name)).is_ok() {
-            return Err(format!(
-                "{} already exists at the destination. Refresh and confirm again.",
-                skill.folder_name
-            ));
+        if matches!(action, OperationAction::Uninstall) {
+            ensure_uninstall_safe_from_source(
+                settings_now,
+                &item_path(&destination_resolved, installed.as_ref().unwrap()),
+            )?;
         }
-        eligible.push(skill);
+        eligible.push(ManageItem {
+            folder_name: installed.as_ref().map_or_else(
+                || source.as_ref().unwrap().folder_name.clone(),
+                |installed| installed.folder_name.clone(),
+            ),
+            source,
+            installed,
+        });
     }
     if eligible.is_empty() {
-        return Err("None of the selected skills is eligible to install.".into());
+        return Err(format!(
+            "None of the selected skills is eligible to {}.",
+            match action {
+                OperationAction::Install => "install",
+                OperationAction::Update => "update",
+                OperationAction::Uninstall => "uninstall",
+            }
+        ));
     }
     let warnings = eligible
         .iter()
-        .flat_map(|skill| skill.links.clone())
+        .flat_map(|item| {
+            item.source
+                .iter()
+                .flat_map(|source| source.links.clone())
+                .chain(
+                    item.installed
+                        .iter()
+                        .flat_map(|installed| installed.links.clone()),
+                )
+        })
         .collect();
-    let notices = baseline.warnings;
     let token = new_token();
-    let mut pending = plans().lock().unwrap_or_else(|e| e.into_inner());
-    pending.clear();
-    pending.insert(
+    plans().lock().unwrap_or_else(|e| e.into_inner()).clear();
+    plans().lock().unwrap_or_else(|e| e.into_inner()).insert(
         token.clone(),
-        InstallPlan {
+        ManagePlan {
+            action,
             harness,
-            source_setting: settings_now.source.clone().expect("source validated above"),
+            destination_resolved,
             source_parent,
-            destination_resolved: destination_resolved.clone(),
-            destination_setting: destination.clone(),
-            skills: eligible.clone(),
+            items: eligible.clone(),
             warnings,
         },
     );
     Ok(PrepareResponse {
         token,
+        action,
         eligible: eligible
             .iter()
-            .map(|skill| PreparedSkill {
-                folder_name: skill.folder_name.clone(),
-                link_warnings: skill.links.clone(),
-                warnings: skill.warnings.clone(),
+            .map(|item| PreparedSkill {
+                folder_name: item.folder_name.clone(),
+                link_warnings: item
+                    .source
+                    .iter()
+                    .flat_map(|source| source.links.clone())
+                    .chain(
+                        item.installed
+                            .iter()
+                            .flat_map(|installed| installed.links.clone()),
+                    )
+                    .collect(),
+                warnings: item
+                    .source
+                    .iter()
+                    .flat_map(|source| source.warnings.clone())
+                    .chain(
+                        item.installed
+                            .iter()
+                            .flat_map(|installed| installed.warnings.clone()),
+                    )
+                    .collect(),
             })
             .collect(),
         skipped,
         destination_path: destination,
-        warnings: notices,
+        warnings: baseline.warnings,
     })
 }
 
@@ -269,17 +390,42 @@ pub fn execute_locked(
     channel: Channel<OperationEvent>,
 ) -> Result<(), String> {
     RUNNING.store(true, Ordering::Release);
-    let result = execute_plan(token, settings_now, acknowledge_links, |event| {
-        let _ = channel.send(event);
-    });
+    let result = execute_operation(
+        token,
+        settings_now,
+        acknowledge_links,
+        recycle_to_system,
+        |event| {
+            let _ = channel.send(event);
+        },
+    );
     RUNNING.store(false, Ordering::Release);
     result
 }
 
-fn execute_plan(
+fn execute_operation(
     token: &str,
     settings_now: &Settings,
     acknowledge_links: bool,
+    recycle: impl FnMut(&Path) -> Result<(), String>,
+    emit: impl FnMut(OperationEvent),
+) -> Result<(), String> {
+    execute_operation_with_place(
+        token,
+        settings_now,
+        acknowledge_links,
+        recycle,
+        |from, to| fs::rename(from, to).map_err(|error| error.to_string()),
+        emit,
+    )
+}
+
+fn execute_operation_with_place(
+    token: &str,
+    settings_now: &Settings,
+    acknowledge_links: bool,
+    mut recycle: impl FnMut(&Path) -> Result<(), String>,
+    place: impl Fn(&Path, &Path) -> Result<(), String>,
     mut emit: impl FnMut(OperationEvent),
 ) -> Result<(), String> {
     let plan = plans()
@@ -287,112 +433,394 @@ fn execute_plan(
         .unwrap_or_else(|e| e.into_inner())
         .remove(token)
         .ok_or_else(|| {
-            "This installation confirmation expired. Refresh and confirm again.".to_string()
+            "This operation confirmation expired. Refresh and confirm again.".to_string()
         })?;
-    ensure_link_acknowledgement(&plan, acknowledge_links)?;
-    let configured = settings::configured_destination(settings_now, plan.harness)
-        .ok_or_else(|| "No destination is configured for this harness.".to_string())?;
-    if !resolves_to(settings_now.source.as_deref(), &plan.source_parent)
-        || !resolves_to(Some(configured), &plan.destination_resolved)
-    {
-        return Err(
-            "Source or destination settings changed after confirmation. Refresh and confirm again."
-                .into(),
-        );
+    if !plan.warnings.is_empty() && !acknowledge_links {
+        return Err("Acknowledge the listed links and junctions before continuing.".into());
     }
-    fs::create_dir_all(&plan.destination_resolved).map_err(|error| {
-        format!(
-            "Could not create destination {}: {error}",
-            plan.destination_resolved.display()
-        )
-    })?;
-    let stage = plan.destination_resolved.join(new_stage_name());
-    fs::create_dir(&stage).map_err(|error| format!("Could not create staging folder: {error}"))?;
-    let completed = run_batch(&plan, &stage, &mut emit);
-    let cleanup = cleanup_stage(&stage, &plan.destination_resolved);
-    let cleanup_ok = cleanup.is_ok();
+    ensure_plan_current(settings_now, &plan)?;
+    if matches!(plan.action, OperationAction::Install) {
+        fs::create_dir_all(&plan.destination_resolved).map_err(|error| {
+            format!(
+                "Could not create destination {}: {error}",
+                plan.destination_resolved.display()
+            )
+        })?;
+        ensure_plan_current(settings_now, &plan)?;
+    }
+    let stage = if !matches!(plan.action, OperationAction::Uninstall) {
+        let stage = plan.destination_resolved.join(new_stage_name());
+        fs::create_dir(&stage)
+            .map_err(|error| format!("Could not create staging folder: {error}"))?;
+        Some(stage)
+    } else {
+        None
+    };
+    let total = plan.items.len();
+    let mut completed = 0;
+    let mut preserved = Vec::new();
+    for item in &plan.items {
+        emit(OperationEvent {
+            kind: "progress".into(),
+            folder_name: Some(item.folder_name.clone()),
+            completed,
+            total,
+            success: None,
+            message: Some(format!("{} {}", action_verb(plan.action), item.folder_name)),
+        });
+        let result = match (&plan.action, &stage) {
+            (OperationAction::Uninstall, _) => {
+                uninstall_one(item, &plan, settings_now, &mut recycle)
+            }
+            (OperationAction::Update, Some(stage)) => {
+                update_one(item, &plan, settings_now, stage, &mut recycle, &place)
+            }
+            (OperationAction::Install, Some(stage)) => {
+                install_manage_one(item, &plan, settings_now, stage, &place)
+            }
+            _ => unreachable!(),
+        };
+        completed += 1;
+        if let Err((error, preserve)) = result {
+            if let Some(path) = preserve {
+                preserved.push(path.clone());
+            }
+            emit(OperationEvent {
+                kind: "result".into(),
+                folder_name: Some(item.folder_name.clone()),
+                completed,
+                total,
+                success: Some(false),
+                message: Some(error),
+            });
+        } else {
+            emit(OperationEvent {
+                kind: "result".into(),
+                folder_name: Some(item.folder_name.clone()),
+                completed,
+                total,
+                success: Some(true),
+                message: Some(format!("{} successfully.", action_past(plan.action))),
+            });
+        }
+    }
+    let cleanup = stage.as_ref().and_then(|stage| {
+        if preserved.is_empty() { cleanup_stage(stage, &plan.destination_resolved).err() }
+        else { Some(format!("Prepared replacement retained at {}; original folder is in the Recycle Bin. Recover it manually if needed.", preserved.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))) }
+    });
     emit(OperationEvent {
         kind: "finished".into(),
         folder_name: None,
         completed,
-        total: plan.skills.len(),
-        success: Some(cleanup_ok),
-        message: Some(match cleanup {
-            Ok(()) => "Installation batch finished.".into(),
-            Err(error) => {
-                format!("Installation finished, but staging cleanup needs attention: {error}")
-            }
-        }),
+        total,
+        success: Some(cleanup.is_none()),
+        message: Some(
+            cleanup.unwrap_or_else(|| format!("{} batch finished.", action_verb(plan.action))),
+        ),
     });
     Ok(())
 }
 
-fn run_batch(plan: &InstallPlan, stage: &Path, mut emit: impl FnMut(OperationEvent)) -> usize {
-    let total = plan.skills.len();
-    let mut completed = 0;
-    for skill in &plan.skills {
-        emit(OperationEvent {
-            kind: "progress".into(),
-            folder_name: Some(skill.folder_name.clone()),
-            completed,
-            total,
-            success: None,
-            message: Some(format!("Preparing {}", skill.folder_name)),
-        });
-        let result = install_one(plan, skill, stage);
-        completed += 1;
-        emit(OperationEvent {
-            kind: "result".into(),
-            folder_name: Some(skill.folder_name.clone()),
-            completed,
-            total,
-            success: Some(result.is_ok()),
-            message: Some(match result {
-                Ok(()) => "Installed successfully.".into(),
-                Err(error) => error,
-            }),
-        });
-    }
-    completed
+fn uninstall_one(
+    item: &ManageItem,
+    plan: &ManagePlan,
+    settings_now: &Settings,
+    recycle: &mut impl FnMut(&Path) -> Result<(), String>,
+) -> Result<(), (String, Option<PathBuf>)> {
+    let installed = item
+        .installed
+        .as_ref()
+        .expect("uninstall destination validated");
+    let path = installed.path.as_path();
+    ensure_plan_current(settings_now, plan).map_err(|error| (error, None))?;
+    ensure_uninstall_safe_from_source(
+        settings_now,
+        &item_path(&plan.destination_resolved, installed),
+    )
+    .map_err(|error| (error, None))?;
+    verify_installed(installed, path)?;
+    manager::validate_recyclable(path).map_err(|error| (error, None))?;
+    ensure_plan_current(settings_now, plan).map_err(|error| (error, None))?;
+    verify_installed(installed, path)?;
+    recycle(path).map_err(|error| (format!("Could not move the installed folder to the Recycle Bin; it was left in place: {error}"), None))
 }
 
-fn install_one(plan: &InstallPlan, skill: &SkillBaseline, stage: &Path) -> Result<(), String> {
-    if !resolves_to(Some(&plan.source_setting), &plan.source_parent)
-        || !resolves_to(Some(&plan.destination_setting), &plan.destination_resolved)
-        || manager::paths_overlap(&skill.source, &plan.destination_resolved)
-    {
-        return Err(
-            "Source or destination relationship changed; refresh and confirm again.".into(),
-        );
+fn update_one(
+    item: &ManageItem,
+    plan: &ManagePlan,
+    settings_now: &Settings,
+    stage: &Path,
+    recycle: &mut impl FnMut(&Path) -> Result<(), String>,
+    place: &impl Fn(&Path, &Path) -> Result<(), String>,
+) -> Result<(), (String, Option<PathBuf>)> {
+    let source = item.source.as_ref().expect("update source validated");
+    let installed = item
+        .installed
+        .as_ref()
+        .expect("update destination validated");
+    let destination = &installed.path;
+    ensure_plan_current(settings_now, plan).map_err(|error| (error, None))?;
+    if manager::fingerprint(&source.source).ok().as_deref() != Some(&source.fingerprint) {
+        return Err((
+            "Source files changed after confirmation. Refresh and confirm again.".into(),
+            None,
+        ));
     }
-    if manager::fingerprint(&skill.source)? != skill.fingerprint {
-        return Err("Source files changed after confirmation. Refresh and confirm again.".into());
-    }
-    let destination = plan.destination_resolved.join(&skill.folder_name);
-    if fs::symlink_metadata(&destination).is_ok() {
-        return Err("A folder with this name now exists; it was left untouched.".into());
-    }
-    let staged = stage.join(&skill.folder_name);
+    verify_installed(installed, destination)?;
+    let staged = stage.join(&item.folder_name);
     fs::create_dir(&staged)
-        .map_err(|error| format!("Could not prepare staging folder: {error}"))?;
+        .map_err(|error| (format!("Could not prepare staging folder: {error}"), None))?;
     manager::copy_materialized(
-        &skill.source,
+        &source.source,
         &staged,
         &[plan.destination_resolved.clone(), stage.to_path_buf()],
-    )?;
-    if !staged_matches(&skill.source, &staged)? {
-        return Err("Staged content did not match the source; nothing was installed.".into());
+    )
+    .map_err(|error| (error, None))?;
+    if !staged_matches(&source.source, &staged).map_err(|error| (error, None))? {
+        return Err((
+            "Staged content did not match the source; the installed folder was left intact.".into(),
+            None,
+        ));
     }
-    if manager::fingerprint(&skill.source)? != skill.fingerprint {
-        return Err("Source files changed while staging. Refresh and confirm again.".into());
+    if manager::fingerprint(&source.source).ok().as_deref() != Some(&source.fingerprint) {
+        return Err((
+            "Source files changed while staging. Refresh and confirm again.".into(),
+            None,
+        ));
     }
-    if fs::symlink_metadata(&destination).is_ok() {
+    ensure_plan_current(settings_now, plan).map_err(|error| (error, None))?;
+    verify_installed(installed, destination)?;
+    manager::validate_recyclable(destination).map_err(|error| (error, None))?;
+    ensure_plan_current(settings_now, plan).map_err(|error| (error, None))?;
+    verify_installed(installed, destination)?;
+    if manager::fingerprint(&source.source).ok().as_deref() != Some(&source.fingerprint) {
+        return Err((
+            "Source files changed before recycling. Refresh and confirm again.".into(),
+            None,
+        ));
+    }
+    recycle(destination).map_err(|error| {
+        (
+            format!(
+                "Could not move the old folder to the Recycle Bin; it was left in place: {error}"
+            ),
+            None,
+        )
+    })?;
+    ensure_plan_current(settings_now, plan).map_err(|error| (format!("The old folder was recycled from {} but destination settings changed. Prepared copy retained at {}. Restore the original manually from the Recycle Bin. {error}", destination.display(), staged.display()), Some(staged.clone())))?;
+    place(&staged, destination).map_err(|error| (format!("The old folder was recycled from {}, but the replacement could not be placed. Prepared copy retained at {}. Restore the original manually from the Recycle Bin. Placement error: {error}", destination.display(), staged.display()), Some(staged)))
+}
+
+fn verify_installed(
+    item: &InstalledBaseline,
+    path: &Path,
+) -> Result<(), (String, Option<PathBuf>)> {
+    if manager::operation_fingerprint(path).ok().as_deref() != Some(&item.fingerprint) {
+        return Err((
+            "The installed folder changed after confirmation. Refresh and confirm again.".into(),
+            None,
+        ));
+    }
+    Ok(())
+}
+
+fn install_manage_one(
+    item: &ManageItem,
+    plan: &ManagePlan,
+    settings_now: &Settings,
+    stage: &Path,
+    place: &impl Fn(&Path, &Path) -> Result<(), String>,
+) -> Result<(), (String, Option<PathBuf>)> {
+    let source = item.source.as_ref().expect("install source validated");
+    ensure_plan_current(settings_now, plan).map_err(|error| (error, None))?;
+    if manager::fingerprint(&source.source).ok().as_deref() != Some(&source.fingerprint) {
+        return Err((
+            "Source files changed after confirmation. Refresh and confirm again.".into(),
+            None,
+        ));
+    }
+    let destination = plan.destination_resolved.join(&item.folder_name);
+    destination_is_absent(&destination).map_err(|error| (error, None))?;
+    let staged = stage.join(&item.folder_name);
+    fs::create_dir(&staged)
+        .map_err(|error| (format!("Could not prepare staging folder: {error}"), None))?;
+    manager::copy_materialized(
+        &source.source,
+        &staged,
+        &[plan.destination_resolved.clone(), stage.to_path_buf()],
+    )
+    .map_err(|error| (error, None))?;
+    if !staged_matches(&source.source, &staged).map_err(|error| (error, None))? {
+        return Err((
+            "Staged content did not match the source; nothing was installed.".into(),
+            None,
+        ));
+    }
+    if manager::fingerprint(&source.source).ok().as_deref() != Some(&source.fingerprint) {
+        return Err((
+            "Source files changed while staging. Refresh and confirm again.".into(),
+            None,
+        ));
+    }
+    ensure_plan_current(settings_now, plan).map_err(|error| (error, None))?;
+    destination_is_absent(&destination).map_err(|error| (error, None))?;
+    place(&staged, &destination).map_err(|error| {
+        (
+            format!("Could not place the prepared folder: {error}"),
+            None,
+        )
+    })
+}
+
+fn action_verb(action: OperationAction) -> &'static str {
+    match action {
+        OperationAction::Install => "Installing",
+        OperationAction::Update => "Updating",
+        OperationAction::Uninstall => "Uninstalling",
+    }
+}
+fn action_past(action: OperationAction) -> &'static str {
+    match action {
+        OperationAction::Install => "Installed",
+        OperationAction::Update => "Updated",
+        OperationAction::Uninstall => "Uninstalled",
+    }
+}
+
+fn item_path(destination: &Path, installed: &InstalledBaseline) -> PathBuf {
+    destination.join(installed.path.file_name().unwrap_or_default())
+}
+
+fn ensure_plan_current(settings_now: &Settings, plan: &ManagePlan) -> Result<(), String> {
+    let destination = settings::configured_destination(settings_now, plan.harness)
+        .ok_or_else(|| "No destination is configured for this harness.".to_string())?;
+    if !resolves_to(Some(destination), &plan.destination_resolved) {
         return Err(
-            "A folder with this name appeared during installation; it was left untouched.".into(),
+            "Destination settings changed during the operation. Refresh and confirm again.".into(),
         );
     }
-    fs::rename(&staged, &destination)
-        .map_err(|error| format!("Could not place the prepared folder: {error}"))
+    if let Some(source_parent) = &plan.source_parent {
+        if !resolves_to(settings_now.source.as_deref(), source_parent)
+            || manager::paths_overlap(source_parent, &plan.destination_resolved)
+        {
+            return Err("Source or destination relationship changed during the operation. Refresh and confirm again.".into());
+        }
+    }
+    Ok(())
+}
+
+fn ensure_uninstall_safe_from_source(
+    settings_now: &Settings,
+    installed_path: &Path,
+) -> Result<(), String> {
+    if let Some(source) = settings_now
+        .source
+        .as_deref()
+        .and_then(|path| manager::resolved_path(path).ok())
+    {
+        if manager::paths_overlap_lexically(installed_path, &source) {
+            return Err("The installed folder overlaps the configured source. Move the source or destination before uninstalling.".into());
+        }
+    }
+    Ok(())
+}
+
+fn destination_is_absent(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Could not verify destination {}: {error}",
+            path.display()
+        )),
+        Ok(_) => Err("A folder with this name now exists; it was left untouched.".into()),
+    }
+}
+
+fn recycle_to_system(path: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::{
+            core::PCWSTR,
+            Win32::{
+                System::Com::{
+                    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL,
+                    COINIT_APARTMENTTHREADED,
+                },
+                UI::Shell::{
+                    FileOperation, IFileOperation, IShellItem, SHCreateItemFromParsingName,
+                    FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION,
+                    FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING,
+                },
+            },
+        };
+
+        // The trash crate canonicalizes its input, which would turn a root junction into its external target.
+        let absolute =
+            manager::resolved_path(path.parent().ok_or("Cannot recycle a filesystem root.")?)?
+                .join(
+                    path.file_name()
+                        .ok_or("Cannot recycle a filesystem root.")?,
+                );
+        let mut parsing_path = absolute.as_os_str().to_string_lossy().into_owned();
+        if let Some(stripped) = parsing_path.strip_prefix(r"\\?\UNC\") {
+            parsing_path = format!(r"\\{stripped}");
+        } else if let Some(stripped) = parsing_path.strip_prefix(r"\\?\") {
+            parsing_path = stripped.to_owned();
+        }
+        let wide: Vec<u16> = std::ffi::OsStr::new(&parsing_path)
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        unsafe {
+            let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            if initialized.is_err() {
+                return Err(format!(
+                    "Could not initialize Windows shell recycling: {initialized}"
+                ));
+            }
+            let result = (|| {
+                let operation: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)
+                    .map_err(|error| error.to_string())?;
+                // FOFX_RECYCLEONDELETE forces recycling; EARLYFAILURE stops on unavailable/failed recycle instead of skipping.
+                let flags = FOF_ALLOWUNDO
+                    | FOF_NOCONFIRMATION
+                    | FOF_NOERRORUI
+                    | FOF_SILENT
+                    | FOF_WANTNUKEWARNING
+                    | FOFX_RECYCLEONDELETE
+                    | FOFX_EARLYFAILURE;
+                operation
+                    .SetOperationFlags(flags)
+                    .map_err(|error| error.to_string())?;
+                let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None)
+                    .map_err(|error| error.to_string())?;
+                operation
+                    .DeleteItem(&item, None)
+                    .map_err(|error| error.to_string())?;
+                operation
+                    .PerformOperations()
+                    .map_err(|error| error.to_string())?;
+                if operation
+                    .GetAnyOperationsAborted()
+                    .map_err(|error| error.to_string())?
+                    .as_bool()
+                {
+                    return Err("Windows aborted the recycle operation".to_string());
+                }
+                if fs::symlink_metadata(path).is_ok() {
+                    return Err("Windows reported success, but the folder remains in place".into());
+                }
+                Ok(())
+            })();
+            CoUninitialize();
+            result
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        trash::delete(path).map_err(|error| error.to_string())
+    }
 }
 
 fn staged_matches(source: &Path, staged: &Path) -> Result<bool, String> {
@@ -426,14 +854,6 @@ fn resolves_to(path: Option<&Path>, captured: &Path) -> bool {
         })
 }
 
-fn ensure_link_acknowledgement(plan: &InstallPlan, acknowledged: bool) -> Result<(), String> {
-    if !plan.warnings.is_empty() && !acknowledged {
-        Err("Acknowledge the listed links and junctions before continuing.".into())
-    } else {
-        Ok(())
-    }
-}
-
 fn identity_key(name: &str) -> String {
     if cfg!(windows) {
         name.to_lowercase()
@@ -465,7 +885,7 @@ fn scans() -> &'static Mutex<HashMap<String, ScanBaseline>> {
     SCANS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn plans() -> &'static Mutex<HashMap<String, InstallPlan>> {
+fn plans() -> &'static Mutex<HashMap<String, ManagePlan>> {
     PLANS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -476,7 +896,9 @@ mod tests {
 
     fn test_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     fn file(path: &Path, contents: &[u8]) {
@@ -527,65 +949,6 @@ mod tests {
     }
 
     #[test]
-    fn batch_materializes_complete_tree_and_keeps_competing_folder() {
-        let _test_guard = test_lock();
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source");
-        let destination = temp.path().join("destination");
-        fs::create_dir_all(&destination).unwrap();
-        let first = skill(&source, "first", b"nested content");
-        let second = skill(&source, "second", b"other content");
-        let third = skill(&source, "third", b"will change");
-        let plan = InstallPlan {
-            harness: Harness::Codex,
-            source_setting: source.clone(),
-            source_parent: manager::resolved_path(&source).unwrap(),
-            destination_resolved: manager::resolved_path(&destination).unwrap(),
-            destination_setting: destination.clone(),
-            skills: vec![first, second, third.clone()],
-            warnings: Vec::new(),
-        };
-        assert!(!manager::paths_overlap(
-            &plan.skills[0].source,
-            &destination
-        ));
-        file(&destination.join("second/keep.txt"), b"untouched");
-        file(
-            &third.source.join(".hidden/nested.txt"),
-            b"changed after confirmation",
-        );
-        let stage = destination.join(".ai-skill-manager-staging-test");
-        fs::create_dir(&stage).unwrap();
-        let mut events = Vec::new();
-        let completed = run_batch(&plan, &stage, |event| events.push(event));
-
-        assert_eq!(completed, 3);
-        assert_eq!(events[1].success, Some(true), "{events:?}");
-        assert_eq!(
-            fs::read(destination.join("first/.hidden/nested.txt")).unwrap(),
-            b"nested content"
-        );
-        assert_eq!(
-            fs::read(destination.join("second/keep.txt")).unwrap(),
-            b"untouched"
-        );
-        assert!(!destination.join("second/.hidden/nested.txt").exists());
-        assert!(!destination.join("third").exists());
-        assert!(events
-            .iter()
-            .any(|event| event.folder_name.as_deref() == Some("first")
-                && event.success == Some(true)));
-        assert!(events
-            .iter()
-            .any(|event| event.folder_name.as_deref() == Some("second")
-                && event.success == Some(false)));
-        assert!(events
-            .iter()
-            .any(|event| event.folder_name.as_deref() == Some("third")
-                && event.success == Some(false)));
-    }
-
-    #[test]
     fn scan_baseline_rejects_source_changes_before_confirmation() {
         let _test_guard = test_lock();
         let temp = tempfile::tempdir().unwrap();
@@ -603,10 +966,11 @@ mod tests {
         record_scan(&response, generation);
         file(&baseline_skill.source.join(".hidden/nested.txt"), b"after");
 
-        let error = prepare(
+        let error = prepare_operation(
             &settings_now,
             Harness::Codex,
             &revision,
+            OperationAction::Install,
             &["Changed".into()],
         )
         .unwrap_err();
@@ -635,29 +999,15 @@ mod tests {
         remove_source_alias(&alias);
         source_alias(&second, &alias);
 
-        let error =
-            prepare(&settings_now, Harness::Codex, &revision, &["Same".into()]).unwrap_err();
-        assert!(error.contains("settings changed after this scan"));
-    }
-
-    #[test]
-    fn linked_content_requires_explicit_acknowledgement() {
-        let _test_guard = test_lock();
-        let warning = LinkWarning {
-            path: "linked".into(),
-            target: "C:/outside".into(),
-        };
-        let plan = InstallPlan {
-            harness: Harness::Codex,
-            source_setting: PathBuf::new(),
-            source_parent: PathBuf::new(),
-            destination_resolved: PathBuf::new(),
-            destination_setting: PathBuf::new(),
-            skills: Vec::new(),
-            warnings: vec![warning],
-        };
-        assert!(ensure_link_acknowledgement(&plan, false).is_err());
-        assert!(ensure_link_acknowledgement(&plan, true).is_ok());
+        let error = prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &revision,
+            OperationAction::Install,
+            &["Same".into()],
+        )
+        .unwrap_err();
+        assert!(error.contains("changed or overlaps after this scan"));
     }
 
     #[test]
@@ -714,24 +1064,42 @@ mod tests {
             "good".into(),
             "unknown".into(),
         ];
-        let cancelled =
-            prepare(&settings_now, Harness::Codex, &response.revision, &selected).unwrap();
+        let cancelled = prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &response.revision,
+            OperationAction::Install,
+            &selected,
+        )
+        .unwrap();
         assert_eq!(cancelled.eligible.len(), 3);
         assert_eq!(cancelled.skipped.len(), 1);
         assert!(!destination.exists());
-        assert!(execute_plan(&cancelled.token, &settings_now, false, |_| {}).is_err());
+        assert!(
+            execute_operation(&cancelled.token, &settings_now, false, |_| Ok(()), |_| {}).is_err()
+        );
         assert!(!destination.exists());
-        let confirmed =
-            prepare(&settings_now, Harness::Codex, &response.revision, &selected).unwrap();
+        let confirmed = prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &response.revision,
+            OperationAction::Install,
+            &selected,
+        )
+        .unwrap();
         file(
             &changed.source.join(".hidden/nested.txt"),
             b"after confirmation",
         );
         file(&destination.join("competing/keep.txt"), b"untouched");
         let mut events = Vec::new();
-        execute_plan(&confirmed.token, &settings_now, true, |event| {
-            events.push(event)
-        })
+        execute_operation(
+            &confirmed.token,
+            &settings_now,
+            true,
+            |_| Ok(()),
+            |event| events.push(event),
+        )
         .unwrap();
         let results: Vec<_> = events
             .iter()
@@ -764,7 +1132,9 @@ mod tests {
             .to_string_lossy()
             .starts_with(STAGING_PREFIX)));
         assert_eq!(events.last().unwrap().kind, "finished");
-        assert!(execute_plan(&confirmed.token, &settings_now, true, |_| {}).is_err());
+        assert!(
+            execute_operation(&confirmed.token, &settings_now, true, |_| Ok(()), |_| {}).is_err()
+        );
     }
 
     #[test]
@@ -783,9 +1153,384 @@ mod tests {
         let revision = response.revision.clone();
         record_scan(&response, begin_scan());
         begin_scan();
-        assert!(prepare(&settings_now, Harness::Codex, &revision, &["One".into()]).is_err());
+        assert!(prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &revision,
+            OperationAction::Install,
+            &["One".into()]
+        )
+        .is_err());
 
         let _guard = acquire().unwrap();
         assert!(acquire().is_err());
+    }
+
+    #[test]
+    fn invalid_source_keeps_identifiable_installed_skill_uninstallable_without_source() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        fs::create_dir_all(source.join("Broken")).unwrap();
+        let installed = skill(&destination, "Broken", b"installed");
+        let settings_now = Settings {
+            source: Some(source),
+            destinations: [(Harness::Codex, destination.clone())]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let row = &response.skills[0];
+        assert_eq!(row.status, "invalid_source");
+        assert!(row
+            .eligible_actions
+            .iter()
+            .any(|action| action == "uninstall"));
+        record_scan(&response, begin_scan());
+        let no_source = Settings {
+            source: None,
+            destinations: settings_now.destinations.clone(),
+            ..Settings::default()
+        };
+        let prepared = prepare_operation(
+            &no_source,
+            Harness::Codex,
+            &response.revision,
+            OperationAction::Uninstall,
+            &["Broken".into()],
+        )
+        .unwrap();
+        assert!(prepared.eligible[0]
+            .warnings
+            .iter()
+            .any(|warning| warning == row.error.as_ref().unwrap()));
+        let mut events = Vec::new();
+        let recycled = temp.path().join("recycled");
+        execute_operation(
+            &prepared.token,
+            &no_source,
+            true,
+            |path| fs::rename(path, &recycled).map_err(|error| error.to_string()),
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert!(!installed.source.exists());
+        assert!(events.iter().any(|event| event.success == Some(true)));
+    }
+
+    #[test]
+    fn stale_installed_baseline_rejects_uninstall() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("destination");
+        let installed = skill(&destination, "One", b"before");
+        let settings_now = Settings {
+            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            ..Settings::default()
+        };
+        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        record_scan(&response, begin_scan());
+        file(&installed.source.join(".hidden/nested.txt"), b"after");
+        let error = prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &response.revision,
+            OperationAction::Uninstall,
+            &["One".into()],
+        )
+        .unwrap_err();
+        assert!(error.contains("changed after the comparison"));
+    }
+
+    #[test]
+    fn source_destination_overlap_blocks_uninstall() {
+        let _guard = test_lock();
+        for source_inside_skill in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let destination = temp.path().join("destination");
+            let installed = skill(&destination, "One", b"content");
+            let source = if source_inside_skill {
+                installed.source.join(".hidden")
+            } else {
+                destination.clone()
+            };
+            fs::create_dir_all(&source).unwrap();
+            let settings_now = Settings {
+                source: Some(source),
+                destinations: [(Harness::Codex, destination)].into_iter().collect(),
+                ..Settings::default()
+            };
+            let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+            record_scan(&response, begin_scan());
+            let error = prepare_operation(
+                &settings_now,
+                Harness::Codex,
+                &response.revision,
+                OperationAction::Uninstall,
+                &["One".into()],
+            )
+            .unwrap_err();
+            assert!(error.contains("overlaps the configured source"));
+        }
+    }
+
+    #[test]
+    fn destination_change_after_confirmation_prevents_recycling() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("destination");
+        let installed = skill(&destination, "One", b"before");
+        let settings_now = Settings {
+            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            ..Settings::default()
+        };
+        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &response.revision,
+            OperationAction::Uninstall,
+            &["One".into()],
+        )
+        .unwrap();
+        file(&installed.source.join(".hidden/nested.txt"), b"changed");
+        let mut recycled = false;
+        let mut events = Vec::new();
+        execute_operation(
+            &prepared.token,
+            &settings_now,
+            true,
+            |_| {
+                recycled = true;
+                Ok(())
+            },
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert!(!recycled);
+        assert_eq!(
+            fs::read(installed.source.join(".hidden/nested.txt")).unwrap(),
+            b"changed"
+        );
+        assert!(events.iter().any(|event| event.success == Some(false)));
+    }
+
+    #[test]
+    fn recycle_failure_leaves_installed_folder_untouched() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("destination");
+        let installed = skill(&destination, "One", b"preserve");
+        let settings_now = Settings {
+            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            ..Settings::default()
+        };
+        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &response.revision,
+            OperationAction::Uninstall,
+            &["One".into()],
+        )
+        .unwrap();
+        let mut events = Vec::new();
+        execute_operation(
+            &prepared.token,
+            &settings_now,
+            true,
+            |_| Err("recycle unavailable".into()),
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(installed.source.join(".hidden/nested.txt")).unwrap(),
+            b"preserve"
+        );
+        assert!(events.iter().any(|event| event.success == Some(false)
+            && event
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Recycle Bin")));
+    }
+
+    #[test]
+    fn placement_failure_after_recycle_retains_prepared_copy_and_reports_paths() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        let old = skill(&destination, "One", b"old");
+        skill(&source, "One", b"new");
+        let settings_now = Settings {
+            source: Some(source),
+            destinations: [(Harness::Codex, destination.clone())]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &response.revision,
+            OperationAction::Update,
+            &["One".into()],
+        )
+        .unwrap();
+        let recycle = temp.path().join("recycled");
+        let mut events = Vec::new();
+        execute_operation_with_place(
+            &prepared.token,
+            &settings_now,
+            true,
+            |path| {
+                fs::rename(path, &recycle).map_err(|error| error.to_string())?;
+                fs::create_dir(path).map_err(|error| error.to_string())
+            },
+            |_, _| Err("forced placement failure".into()),
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert!(
+            !old.source.join(".hidden/nested.txt").exists(),
+            "{events:?}"
+        );
+        assert_eq!(
+            fs::read(recycle.join(".hidden/nested.txt")).unwrap(),
+            b"old"
+        );
+        let failure = events
+            .iter()
+            .find(|event| event.kind == "result")
+            .unwrap()
+            .message
+            .as_deref()
+            .unwrap();
+        let prepared_path = failure
+            .split("Prepared copy retained at ")
+            .nth(1)
+            .unwrap()
+            .split(". Restore")
+            .next()
+            .unwrap();
+        assert!(Path::new(prepared_path).is_dir(), "{failure}");
+        assert!(failure.contains("Restore the original manually from the Recycle Bin"));
+    }
+
+    #[test]
+    fn update_replaces_complete_tree_and_continues_after_one_stale_skill() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        let old_one = skill(&destination, "One", b"old one");
+        let old_two = skill(&destination, "Two", b"old two");
+        let new_one = skill(&source, "One", b"new one");
+        let new_two = skill(&source, "Two", b"new two");
+        file(&old_one.source.join("obsolete.txt"), b"remove me");
+        fs::create_dir(new_one.source.join("empty")).unwrap();
+        let settings_now = Settings {
+            source: Some(source),
+            destinations: [(Harness::Codex, destination.clone())]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        record_scan(&response, begin_scan());
+        let selected = vec!["One".into(), "Two".into()];
+        let prepared = prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &response.revision,
+            OperationAction::Update,
+            &selected,
+        )
+        .unwrap();
+        file(
+            &new_two.source.join(".hidden/nested.txt"),
+            b"changed after prepare",
+        );
+        let recycle_root = temp.path().join("recycled");
+        fs::create_dir(&recycle_root).unwrap();
+        let mut events = Vec::new();
+        execute_operation(
+            &prepared.token,
+            &settings_now,
+            true,
+            |path| {
+                fs::rename(path, recycle_root.join(path.file_name().unwrap()))
+                    .map_err(|error| error.to_string())
+            },
+            |event| events.push(event),
+        )
+        .unwrap();
+        let results: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "result")
+            .map(|event| event.success)
+            .collect();
+        assert_eq!(results, vec![Some(true), Some(false)]);
+        assert_eq!(
+            fs::read(destination.join("One/.hidden/nested.txt")).unwrap(),
+            b"new one"
+        );
+        assert!(destination.join("One/empty").is_dir());
+        assert!(!destination.join("One/obsolete.txt").exists());
+        assert_eq!(
+            fs::read(recycle_root.join("One/obsolete.txt")).unwrap(),
+            b"remove me"
+        );
+        assert_eq!(
+            fs::read(old_two.source.join(".hidden/nested.txt")).unwrap(),
+            b"old two"
+        );
+        assert_eq!(
+            fs::read(new_two.source.join(".hidden/nested.txt")).unwrap(),
+            b"changed after prepare"
+        );
+    }
+
+    #[test]
+    fn recycling_junction_entry_does_not_follow_external_target() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("destination");
+        let external = temp.path().join("external");
+        let bin = temp.path().join("recycled");
+        let installed = skill(&destination, "One", b"installed");
+        file(&external.join("keep.txt"), b"external");
+        source_alias(&external, &installed.source.join("resources"));
+        let settings_now = Settings {
+            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            ..Settings::default()
+        };
+        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            Harness::Codex,
+            &response.revision,
+            OperationAction::Uninstall,
+            &["One".into()],
+        )
+        .unwrap();
+        execute_operation(
+            &prepared.token,
+            &settings_now,
+            true,
+            |path| fs::rename(path, &bin).map_err(|error| error.to_string()),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(fs::read(external.join("keep.txt")).unwrap(), b"external");
+        assert!(bin.join("resources").exists());
     }
 }

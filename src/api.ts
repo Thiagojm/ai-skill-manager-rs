@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core'
 
 export type Harness = 'codex' | 'claude' | 'antigravity' | 'open_code'
 export type Theme = 'dark' | 'light'
+export type OperationAction = 'install' | 'update' | 'uninstall'
 
 export interface Settings {
   source: string | null
@@ -36,6 +37,7 @@ export interface SkillRow {
   error: string | null
   differences: Difference[]
   linkWarnings: LinkWarning[]
+  eligibleActions: OperationAction[]
 }
 
 export interface ScanResponse {
@@ -54,6 +56,7 @@ export interface PreparedSkill {
 }
 
 export interface PrepareResponse {
+  action: OperationAction
   token: string
   eligible: PreparedSkill[]
   skipped: string[]
@@ -73,14 +76,14 @@ export interface OperationEvent {
 export const loadSettings = () => invoke<SettingsResponse>('load_settings')
 export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings })
 export const scanSkills = (harness: Harness) => invoke<ScanResponse>('scan_skills', { harness })
-export const prepareInstall = (harness: Harness, revision: string, selected: string[]) =>
-  invoke<PrepareResponse>('prepare_install', { harness, revision, selected })
-export const executeInstall = (
+export const prepareOperation = (action: OperationAction, harness: Harness, revision: string, selected: string[]) =>
+  invoke<PrepareResponse>('prepare_operation', { action, harness, revision, selected })
+export const executeOperation = (
   token: string,
   acknowledgeLinks: boolean,
   onEvent: (event: OperationEvent) => void,
 ) => {
   const channel = new Channel<OperationEvent>()
   channel.onmessage = onEvent
-  return invoke<void>('execute_install', { token, acknowledgeLinks, onEvent: channel })
+  return invoke<void>('execute_operation', { token, acknowledgeLinks, onEvent: channel })
 }

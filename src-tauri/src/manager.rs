@@ -48,7 +48,14 @@ pub struct SkillRow {
     pub differences: Vec<Difference>,
     pub link_warnings: Vec<LinkWarning>,
     #[serde(skip)]
+    pub(crate) source_link_warnings: Vec<LinkWarning>,
+    #[serde(skip)]
+    pub(crate) destination_link_warnings: Vec<LinkWarning>,
+    pub eligible_actions: Vec<String>,
+    #[serde(skip)]
     pub(crate) source_fingerprint: Option<String>,
+    #[serde(skip)]
+    pub(crate) destination_fingerprint: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -160,7 +167,11 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
             error: None,
             differences: Vec::new(),
             link_warnings: Vec::new(),
+            source_link_warnings: Vec::new(),
+            destination_link_warnings: Vec::new(),
+            eligible_actions: Vec::new(),
             source_fingerprint: None,
+            destination_fingerprint: None,
         };
 
         if source_skill.as_ref().is_some_and(|s| s.ambiguous)
@@ -179,6 +190,18 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
             if let Some(error) = &source_skill.metadata_error {
                 row.status = "invalid_source".into();
                 row.error = Some(error.clone());
+                if let Some(installed_skill) = &installed_skill {
+                    row.warnings.push(
+                        "An identifiable installed folder is available for uninstallation.".into(),
+                    );
+                    row.destination_fingerprint = operation_fingerprint(&installed_skill.path).ok();
+                    row.link_warnings =
+                        nonfollowing_links(&installed_skill.path).unwrap_or_default();
+                    row.destination_link_warnings = row.link_warnings.clone();
+                }
+                if row.destination_fingerprint.is_some() {
+                    row.eligible_actions.push("uninstall".into());
+                }
                 skills.push(row);
                 continue;
             }
@@ -206,12 +229,22 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
                     let (equal, differences) = compare_trees(&source_tree, &installed_tree);
                     row.status = if equal { "identical" } else { "different" }.into();
                     row.differences = differences;
+                    row.source_link_warnings = source_tree.links.clone();
+                    row.destination_link_warnings = installed_tree.links.clone();
                     row.link_warnings.extend(source_tree.links);
                     row.link_warnings.extend(installed_tree.links);
+                    row.destination_fingerprint =
+                        operation_fingerprint(&installed_skill.as_ref().unwrap().path).ok();
                 }
                 (Err(error), _) | (_, Err(error)) => {
                     row.status = "error".into();
                     row.error = Some(error);
+                    if let Some(installed_skill) = &installed_skill {
+                        row.destination_fingerprint =
+                            operation_fingerprint(&installed_skill.path).ok();
+                        row.link_warnings =
+                            nonfollowing_links(&installed_skill.path).unwrap_or_default();
+                    }
                 }
             },
             (Some(_), None) => match source_tree.unwrap() {
@@ -219,6 +252,7 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
                     row.status = "missing".into();
                     row.source_fingerprint = Some(tree_fingerprint(&tree));
                     row.link_warnings = tree.links;
+                    row.source_link_warnings = row.link_warnings.clone();
                 }
                 Err(error) => {
                     row.status = "error".into();
@@ -229,13 +263,38 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
                 Ok(tree) => {
                     row.status = "installed_only".into();
                     row.link_warnings = tree.links;
+                    row.destination_link_warnings = row.link_warnings.clone();
+                    row.destination_fingerprint =
+                        operation_fingerprint(&installed_skill.as_ref().unwrap().path).ok();
                 }
                 Err(error) => {
                     row.status = "error".into();
                     row.error = Some(error);
+                    row.destination_fingerprint =
+                        operation_fingerprint(&installed_skill.as_ref().unwrap().path).ok();
+                    row.link_warnings = nonfollowing_links(&installed_skill.as_ref().unwrap().path)
+                        .unwrap_or_default();
+                    row.destination_link_warnings = row.link_warnings.clone();
                 }
             },
             (None, None) => unreachable!(),
+        }
+        if row.source_fingerprint.is_some() && row.destination_path.is_none() {
+            row.eligible_actions.push("install".into());
+        }
+        if row.status == "different"
+            && row.source_fingerprint.is_some()
+            && row.destination_fingerprint.is_some()
+        {
+            row.eligible_actions.push("update".into());
+        }
+        if row.destination_fingerprint.is_some()
+            && !row
+                .eligible_actions
+                .iter()
+                .any(|action| action == "uninstall")
+        {
+            row.eligible_actions.push("uninstall".into());
         }
         skills.push(row);
     }
@@ -316,9 +375,10 @@ fn read_folders(parent: &Path, source: bool) -> Result<BTreeMap<String, SkillInf
         let folder_name = path.file_name().unwrap().to_string_lossy().into_owned();
         let key = identity_key(&folder_name);
         let skill_file = path.join("SKILL.md");
-        let skill_exists = fs::symlink_metadata(&skill_file).is_ok();
-        let skill_is_file = skill_file.is_file();
-        if !source && (!skill_exists || !skill_is_file) {
+        let skill_is_identifiable = fs::symlink_metadata(&skill_file).is_ok_and(|metadata| {
+            metadata.is_file() || metadata.file_type().is_symlink() && !skill_file.is_dir()
+        });
+        if !source && !skill_is_identifiable {
             continue;
         }
         let mut skill = SkillInfo {
@@ -477,6 +537,94 @@ pub(crate) fn fingerprint(path: &Path) -> Result<String, String> {
     inventory(path).map(|tree| tree_fingerprint(&tree))
 }
 
+pub(crate) fn operation_fingerprint(path: &Path) -> Result<String, String> {
+    match fingerprint(path) {
+        Ok(value) => Ok(format!("tree:{value}")),
+        Err(_) => nonfollowing_fingerprint(path).map(|value| format!("fallback:{value}")),
+    }
+}
+
+fn nonfollowing_fingerprint(path: &Path) -> Result<String, String> {
+    fn walk(root: &Path, path: &Path, hash: &mut Sha256) -> Result<(), String> {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
+        let relative = path.strip_prefix(root).unwrap_or(path);
+        hash.update(relative.to_string_lossy().as_bytes());
+        if is_link_or_reparse(path, &metadata)? {
+            hash.update(b"link");
+            let target = fs::read_link(path)
+                .map_err(|error| format!("Could not read link {}: {error}", path.display()))?;
+            hash.update(target.to_string_lossy().as_bytes());
+        } else if metadata.is_dir() {
+            hash.update(b"directory");
+            let mut entries = fs::read_dir(path)
+                .map_err(|error| format!("Could not read {}: {error}", path.display()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("Could not enumerate {}: {error}", path.display()))?;
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                walk(root, &entry.path(), hash)?;
+            }
+        } else if metadata.is_file() {
+            hash.update(b"file");
+            hash.update(metadata.len().to_le_bytes());
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    hash.update(duration.as_nanos().to_le_bytes());
+                }
+            }
+            // ponytail: unreadable files can only be compared by size/time/error metadata; use content hashing when access permits.
+            match hash_file(path) {
+                Ok(bytes) => hash.update(bytes),
+                Err(error) => hash.update(format!("unreadable:{:?}", error.kind()).as_bytes()),
+            }
+        } else {
+            return Err(format!(
+                "Unsupported filesystem entry at {}",
+                path.display()
+            ));
+        }
+        Ok(())
+    }
+    let mut hash = Sha256::new();
+    walk(path, path, &mut hash)?;
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+fn nonfollowing_links(path: &Path) -> Result<Vec<LinkWarning>, String> {
+    fn walk(root: &Path, path: &Path, out: &mut Vec<LinkWarning>) -> Result<(), String> {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
+        if is_link_or_reparse(path, &metadata)? {
+            let target = fs::read_link(path)
+                .map(|target| target.display().to_string())
+                .unwrap_or_else(|_| "unavailable target".into());
+            let relative = path.strip_prefix(root).unwrap_or(path);
+            out.push(LinkWarning {
+                path: if relative.as_os_str().is_empty() {
+                    ".".into()
+                } else {
+                    display_path(relative)
+                },
+                target,
+            });
+        } else if metadata.is_dir() {
+            let mut entries = fs::read_dir(path)
+                .map_err(|error| format!("Could not read {}: {error}", path.display()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("Could not enumerate {}: {error}", path.display()))?;
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                walk(root, &entry.path(), out)?;
+            }
+        }
+        Ok(())
+    }
+    let mut links = Vec::new();
+    walk(path, path, &mut links)?;
+    Ok(links)
+}
+
 pub(crate) fn content_fingerprint(path: &Path) -> Result<String, String> {
     let tree = inventory(path)?;
     let mut normalized = BTreeMap::new();
@@ -505,6 +653,25 @@ pub(crate) fn paths_overlap(left: &Path, right: &Path) -> bool {
     key_contains(&left, &right) || key_contains(&right, &left)
 }
 
+pub(crate) fn paths_overlap_lexically(left: &Path, right: &Path) -> bool {
+    fn normalize(path: &Path) -> PathBuf {
+        let mut out = PathBuf::new();
+        for component in absolute_path(path).components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    out.pop();
+                }
+                other => out.push(other.as_os_str()),
+            }
+        }
+        out
+    }
+    let left = path_key(&normalize(left));
+    let right = path_key(&normalize(right));
+    key_contains(&left, &right) || key_contains(&right, &left)
+}
+
 pub(crate) fn path_is_within(path: &Path, parent: &Path) -> bool {
     let path = path_key(&resolve_path(path).unwrap_or_else(|_| absolute_path(path)));
     let parent = path_key(&resolve_path(parent).unwrap_or_else(|_| absolute_path(parent)));
@@ -527,6 +694,43 @@ pub(crate) fn is_link_or_reparse_path(path: &Path) -> Result<bool, String> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
     is_link_or_reparse(path, &metadata)
+}
+
+pub(crate) fn validate_recyclable(path: &Path) -> Result<(), String> {
+    fn walk(path: &Path) -> Result<(), String> {
+        let metadata = fs::symlink_metadata(path).map_err(|error| {
+            format!(
+                "Could not inspect {} before recycling: {error}",
+                path.display()
+            )
+        })?;
+        if is_link_or_reparse(path, &metadata)? {
+            return Ok(());
+        }
+        if metadata.is_dir() {
+            for entry in fs::read_dir(path).map_err(|error| {
+                format!(
+                    "Could not inspect {} before recycling: {error}",
+                    path.display()
+                )
+            })? {
+                let entry = entry.map_err(|error| {
+                    format!(
+                        "Could not enumerate {} before recycling: {error}",
+                        path.display()
+                    )
+                })?;
+                walk(&entry.path())?;
+            }
+        } else if !metadata.is_file() {
+            return Err(format!(
+                "Unsupported filesystem entry cannot be recycled safely: {}",
+                path.display()
+            ));
+        }
+        Ok(())
+    }
+    walk(path)
 }
 
 fn resolve_path(path: &Path) -> Result<PathBuf, String> {
@@ -1133,6 +1337,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let destination = temp.path().join("destination");
         fs::create_dir_all(destination.join("Unknown").join("SKILL.md")).unwrap();
+        let linked = destination.join("LinkedDirectory");
+        fs::create_dir(&linked).unwrap();
+        link_dir(
+            &destination.join("Unknown").join("SKILL.md"),
+            &linked.join("SKILL.md"),
+        );
         assert!(read_installed(&destination).unwrap().is_empty());
     }
 
