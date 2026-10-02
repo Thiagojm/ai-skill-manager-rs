@@ -1,5 +1,13 @@
 # Work status
 
+## Current acceptance and next release — October 2, 2026
+
+- The user authorized v0.1.1 preparation and a draft release. Frontend/Tauri/Cargo versions and root lockfile entries are synchronized to 0.1.1. This scope includes sending the release source to Actions, generating packages and uploading verified artifacts to the new draft. Public publication remains gated; v0.1.0 assets are retained.
+
+- The user reported that all native Ubuntu 22.04 acceptance tests passed for the correction package and requested README review/update. Record this as user-reported evidence without detailed logs, independently of automated Actions/package inspection/checksum evidence. Ubuntu 24.04 remains unvalidated; support claims are limited to Ubuntu 22.04 x64 and Windows x64.
+- Packages run 37056208952 completed successfully on both systems; CI runs 37056209004 and 37056780132 passed. The native checklist and README now reflect acceptance, manual path entry, Linux permissions/system trash, linked-copy differences and Ubuntu installation instructions. Older checkpoints below are historical.
+- Version remains 0.1.0. Suggested next scope: agree release version (0.1.1 proposed), synchronize manifests/lockfiles, prepare release notes, generate and verify final NSIS/deb packages, then validate/install those exact artifacts before separately authorized publication. No bump, release creation, commit or push is performed in this documentation update.
+
 ## Ubuntu usability corrections — October 2, 2026
 
 - The user subsequently authorized commit/push and a new deb on GitHub for installation. Source commit 556da2dcf4496a80b37f36403fe02161cda4bbbd was pushed. Packages run 37056208952 completed the Ubuntu job successfully, including checks, compilation, desktop filename/category/icon inspection and upload. Downloaded ubuntu-amd64 artifact matched SHA-256 b1c8f8a1196cf4a6dda78d1447e0f0763b507db4830b4272f7203f0adcc29f7b and SOURCE_COMMIT.txt. Windows packaging was still in progress at this checkpoint. Native Ubuntu installation and acceptance of these corrections remain pending. No release assets were replaced.

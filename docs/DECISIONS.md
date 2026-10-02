@@ -1,5 +1,9 @@
 # Durable decisions
 
+## Validated Ubuntu scope — October 2, 2026
+
+The user reported all native acceptance tests passing on Ubuntu 22.04 x64. Public documentation names that validated configuration; Ubuntu 24.04 and other distributions remain unvalidated. Record native results as user-reported evidence separately from Actions compilation/tests, package inspection and downloaded checksum verification. The lack of a 24.04 environment is a documented validation gap, not evidence of failure or approval to claim support there.
+
 ## Manual folder paths and Linux desktop metadata — October 2, 2026
 
 Keep native folder pickers and offer literal absolute path entry through the existing backend settings flow. Do not replace GTK or add a dialog dependency to control its window geometry. Preserve structural link comparisons and explain materialization instead of claiming linked sources are identical to ordinary copies. Linux icons use ordinary-density filenames so Tauri's physical-size-based layout matches their PNG dimensions. Normalize only the generated deb desktop filename in the manual Packages workflow, retaining the existing product name, version and identifier; do not rename the application to influence packaging.

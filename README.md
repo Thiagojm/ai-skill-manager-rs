@@ -3,15 +3,16 @@
 <img src="src-tauri/icons/128x128.png" alt="AI Skill Manager icon: a folder containing four connected tiles" width="80" />
 
 [![Platform: Windows x64](https://img.shields.io/badge/Platform-Windows%20x64-0078D6?logo=windows&logoColor=white)](https://github.com/Thiagojm/ai-skill-manager-rs)
+[![Platform: Ubuntu 22.04 x64](https://img.shields.io/badge/Platform-Ubuntu%2022.04%20x64-E95420?logo=ubuntu&logoColor=white)](docs/ubuntu-native-validation.md)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri&logoColor=white)](https://tauri.app/)
 [![Rust](https://img.shields.io/badge/Rust-1.98+-black?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/Thiagojm/ai-skill-manager-rs?label=Release)](https://github.com/Thiagojm/ai-skill-manager-rs/releases)
 
-A fast, reliable, and user-friendly Windows desktop application to discover, compare, install, update, and manage local AI skills across your coding assistants.
+A desktop application for Windows x64 and Ubuntu 22.04 x64 to discover, compare, install, update, and manage local AI skills across your coding assistants.
 
-Ubuntu 22.04 x64 compilation and automated tests pass in GitHub Actions. The manual **Packages** workflow generates Windows NSIS and Ubuntu `.deb` validation artifacts with SHA-256 checksums and source commit identification, retained for 14 days. Download them from the workflow run's Artifacts section. Ubuntu desktop acceptance is pending; follow the [native validation checklist](docs/ubuntu-native-validation.md). Ubuntu 24.04 native behavior remains untested.
+Windows and Ubuntu compilation and automated tests pass in GitHub Actions. The user reported that all [native acceptance tests](docs/ubuntu-native-validation.md) passed on Ubuntu 22.04. Ubuntu 24.04 and other Linux distributions remain unvalidated.
 
 Managing skills across multiple AI tools usually means manual folder copying, guessing which version is installed where, and risking accidental overwrites. **AI Skill Manager** solves this with a centralized, visual dashboard designed for seamless multi-agent skill maintenance.
 
@@ -23,10 +24,12 @@ Managing skills across multiple AI tools usually means manual folder copying, gu
 - 🔍 **Deep Whole-Tree Comparison**: Compares full directory trees — including nested files, helper scripts, configuration assets, empty directories, and hidden resources.
 - 🛡️ **Safe & Non-Destructive Operations**:
   - **Verified Staging**: Prepares and validates replacements before changing the installed folder. If placement fails after recycling, the app reports recovery paths.
-  - **Recycle Bin Integration**: Uninstalled or replaced folders are safely moved to the Windows Recycle Bin via native Windows Shell operations (`IFileOperation`), never permanently deleted.
+  - **System Trash Integration**: Uninstalled or replaced folders move to the Windows Recycle Bin or Ubuntu system trash. Recycling failures abort the affected operation without a permanent-delete fallback. Restore manually; the operating system controls retention.
   - **Link Protection**: Safeguards directory junctions and symbolic links without mutating external targets.
 - ⚡ **Parallel Scanning**: Up to four inventory workers and an in-memory source snapshot reduce repeated work when switching tabs. Use **Refresh** after changing source files externally.
 - 🎨 **Modern & Accessible UI**: Clean dark and light modes, instant search by skill title or directory ID, status filtering, and keyboard navigation.
+- 📂 **Folder Selection**: Native folder pickers or **Enter path…** with validated absolute paths. Custom harness folder paths can also be typed directly.
+- 🐧 **Linux File Permissions**: Ordinary file permission bits participate in comparison; copying preserves executable scripts. Directory permissions follow creation/umask; ownership, ACLs, and extended attributes are not managed.
 
 ---
 
@@ -55,8 +58,8 @@ When scanning your source folder against an agent's destination, each skill is c
 | Status | Meaning | Available Actions |
 | :--- | :--- | :--- |
 | 🟡 **Missing** | Present in source, not yet installed in the agent destination. | **Install** |
-| 🟢 **Identical** | Fully synchronized; complete trees and file contents match. | **Uninstall** |
-| 🔵 **Different** | Exists in both locations, but contents or structures differ. | **Update** (Clean Replacement), **Uninstall** |
+| 🟢 **Identical** | Complete trees, file contents, and compared permissions match. | **Uninstall** |
+| 🔵 **Different** | Exists in both locations, but contents, entry types, or Linux file permissions differ. | **Update** (Clean Replacement), **Uninstall** |
 | ⚪ **Installed only** | Exists only in the agent destination (absent from source). | **Uninstall** |
 
 ---
@@ -69,12 +72,26 @@ When scanning your source folder against an agent's destination, each skill is c
 2. Run the installer and follow the setup wizard.
 3. Launch **AI Skill Manager**, choose your skills source folder, and start managing!
 
-### Option 2: Running from Source
+### Option 2: Ubuntu 22.04 x64 Package
+
+Download `ubuntu-amd64` from the [latest validated package run](https://github.com/Thiagojm/ai-skill-manager-rs/actions/runs/37056208952), under **Artifacts**, and extract the ZIP. Actions downloads require a GitHub login. Artifacts are retained for 14 days and include the `.deb`, `SHA256SUMS.txt`, and `SOURCE_COMMIT.txt`.
+
+Run inside the extracted directory:
+
+```bash
+sha256sum -c SHA256SUMS.txt
+sudo apt install './AI Skill Manager_0.1.0_amd64.deb'
+```
+
+Launch **AI Skill Manager** from your application menu. APT installs the declared runtime dependencies, including `xdg-utils`. This validation package is available through Actions; it has not been added to the published Windows release.
+
+### Option 3: Running from Source
 
 #### Prerequisites
 - **Node.js**: `24.x` or newer (with `npm 12+`)
 - **Rust**: `1.98.x` or newer (with Cargo)
-- **Operating System**: Windows 10/11 x64
+- **Operating System**: Windows 10/11 x64 or Ubuntu 22.04 x64
+- **Native build prerequisites**: Windows requires Visual Studio C++ Build Tools and WebView2. On Ubuntu, install the packages below before starting development.
 
 #### Quick Start
 ```powershell
@@ -89,11 +106,22 @@ npm.cmd ci
 npm.cmd run tauri dev
 ```
 
+On Ubuntu, use `npm` instead of `npm.cmd`:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xdg-utils
+git clone https://github.com/Thiagojm/ai-skill-manager-rs.git
+cd ai-skill-manager-rs
+npm ci
+npm run tauri dev
+```
+
 ---
 
 ## 📖 Quick Tutorial
 
-Screenshots show the current app interface in a browser with demonstration data and example paths. They illustrate the workflow; they are not native installer or filesystem-operation test results.
+Screenshots show an earlier interface in a browser with demonstration data and example paths. Some labels and controls have since changed; these images illustrate the workflow and do not establish native validation.
 
 ### 1. Choose your library and destination
 
@@ -109,6 +137,8 @@ library/
 ```
 
 The app remembers the last successfully selected source. Use the same button whenever you want another library. Choose a harness tab, then check **Managed destination**; **Choose destination…** changes that tab's saved destination. Merely opening a missing destination does not create it.
+
+Use **Enter path…** beside either picker to type an absolute path and press Enter. Paths are literal: `~` and environment variables are not expanded. This also provides an alternative if the GTK picker is awkward on your desktop. **Open folder** opens the active destination in Explorer on Windows or through `xdg-open` on Ubuntu.
 
 ![Comparison view with example skills, harness tabs, source and destination controls, and file differences](docs/screenshots/comparison.png)
 
@@ -126,13 +156,13 @@ Select one or more **Missing** skills and click **Install**. Review the folders 
 
 ### 4. Update different skills
 
-Select **Different** skills and click **Update**, then review **Confirm update**. Update replaces the complete destination folder with the source. Destination-only files leave with the old folder; this is not a merge. The old folder moves to Windows Recycle Bin before the replacement is placed.
+Select **Different** skills and click **Update**, then review **Confirm update**. Update replaces the complete destination folder with the source. Destination-only files leave with the old folder; this is not a merge. The old folder moves to the system trash before the replacement is placed.
 
 ![Update confirmation explaining whole-folder replacement and Recycle Bin recovery](docs/screenshots/update.png)
 
 ### 5. Uninstall installed skills
 
-Select installed skills, including **Installed only**, and click **Uninstall**. Verify the destination and names before **Confirm uninstall**. The complete folders move to Windows Recycle Bin. If recycling fails, the affected operation fails without a permanent-delete fallback. Restore manually through Recycle Bin when available; Windows controls retention.
+Select installed skills, including **Installed only**, and click **Uninstall**. Verify the destination and names before **Confirm uninstall**. The complete folders move to the system trash. If recycling fails, the affected operation fails without a permanent-delete fallback. Restore manually through the operating system's trash interface when available; the operating system controls retention.
 
 ![Uninstall confirmation showing the selected folder and Recycle Bin notice](docs/screenshots/uninstall.png)
 
@@ -141,6 +171,8 @@ Select installed skills, including **Installed only**, and click **Uninstall**. 
 Each batch shows progress and an individual result for each skill; isolated failures do not stop the remaining batch. Review failures and any reported recovery paths before clicking **Done** or **Close and refresh**. The app refreshes after execution. There is no cancellation once execution starts.
 
 Links and junctions appear as warnings. When acknowledgement is required, review their targets and check the acknowledgement box to enable confirmation, or cancel. Copies materialize linked content; recycling preserves external targets.
+
+A source containing links can remain **Different** after Install or Update even when the copied content matches: the destination contains ordinary files and folders, while the source retains links. This entry-type difference is intentional.
 
 Use **Refresh** after editing files outside the app: switching tabs can reuse the source snapshot. The theme button in the upper-right corner switches between dark and light; the last choice is saved. External harnesses may need their own refresh or restart to pick up changes. OpenCode may also discover Claude/shared skills; each app tab manages only its configured destination.
 
@@ -163,12 +195,14 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
 ```
 
+On Ubuntu, replace `npm.cmd` with `npm`. Automatic CI runs on Windows 2022 and Ubuntu 22.04 for pull requests and pushes to `main`. The manually dispatched **Packages** workflow runs checks and generates NSIS/`.deb` artifacts with checksums; it does not publish releases.
+
 ### Manual Testing with Disposable Paths
 For testing filesystem operations safely:
 1. Create a temporary source directory and temporary destination folders for each harness.
 2. Populate the source directory with sample skill folders containing a valid `SKILL.md`.
 3. Verify folder selection, search, status filtering, and theme switching.
-4. Test **Install** on a missing skill, **Update** on a modified skill (confirming obsolete files are cleaned up), and **Uninstall** (confirming items move safely to the Windows Recycle Bin).
+4. Test **Install** on a missing skill, **Update** on a modified skill (confirming obsolete files are cleaned up), and **Uninstall** (confirming items move to the system trash). Use the [Ubuntu acceptance checklist](docs/ubuntu-native-validation.md) for permissions, links, restoration, and package removal/settings retention.
 
 ---
 

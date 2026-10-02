@@ -1,6 +1,6 @@
 # Ubuntu native acceptance
 
-Status: pending. The user has Ubuntu 22.04 desktop available; Ubuntu 24.04 remains pending. CI compilation and package inspection do not establish native acceptance.
+Status: accepted on Ubuntu 22.04 x64. On October 2, 2026, the user reported that all tests below passed after installing the correction package. This is user-reported native evidence, without captured installation/interaction logs or an identified desktop/session type. Ubuntu 24.04 remains unvalidated. CI compilation and package inspection are separate automated evidence.
 
 Use a disposable desktop environment or account. Download the `ubuntu-amd64` artifact from the [package run](https://github.com/Thiagojm/ai-skill-manager-rs/actions/runs/37056208952), extract it and run these commands inside its directory:
 
