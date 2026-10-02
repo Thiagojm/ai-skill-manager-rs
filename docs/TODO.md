@@ -18,7 +18,8 @@
 - Phase 1 is committed as `cf52e50`. The user subsequently configured `origin` at `https://github.com/Thiagojm/ai-skill-manager-rs.git` and reported publishing the repository.
 - Phase 1 native manual validation is user-reported; no direct interaction logs were collected.
 - On October 1, 2026, the user reported successful manual Phase 2 testing and authorized its commit/push and Phase 3 implementation. This is user-reported native evidence without detailed logs.
-- All three approved phases are accepted; Phase 3 is committed as `61bc88e`. The user requested GitHub release planning after the scan correction. Agree the release version, Windows artifact format, and draft/publication boundary before release implementation; the existing plan has no Phase 4.
+- All three approved phases are accepted; Phase 3 is committed as `61bc88e` and the scan correction as `21db04f`. On October 1, 2026, the user authorized a Windows x64 0.1.0 NSIS installer and GitHub draft. Both were created; release build/checking passed and uploaded installer SHA-256 was verified. See project context for the draft and assets. Public publication and signing remain separately gated.
+- Added standard MIT `LICENSE` (Copyright (c) 2026 Thiagojm), updated `package.json` and `Cargo.toml` license metadata, and overhauled `README.md` into an engaging, user-friendly guide with structured development/testing sections.
 
 ## Remaining validation coverage
 
@@ -27,5 +28,5 @@
 
 ## Deferred scope
 
-- Next: define the GitHub release scope. Proposed minimum is Windows x64, the current 0.1.0 version, an NSIS installer, and a draft release for installer validation. This proposal is not yet approved. Remaining Windows evidence gaps are listed above.
+- Next: user tests installer installation, installed-app launch, and uninstallation. Keep GitHub v0.1.0 in draft until validated and public publication is explicitly authorized. Remaining Windows evidence gaps are listed above.
 - Signing, installer publication, Linux validation, project-local management, remote downloads, skill editing, automatic synchronization, and in-app restore are outside current authorization or v1 scope as defined in the design.
