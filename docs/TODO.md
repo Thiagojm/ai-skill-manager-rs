@@ -2,6 +2,8 @@
 
 ## Current acceptance and next release — October 2, 2026
 
+- v0.1.1 draft prepared from af297eee1ee86a37febc82e1bfca1d0df22c7430. Actual CI and Packages run 37058459917 passed both systems; uploaded NSIS/deb checksums/source identity and release downloads verified. The draft includes notes, SHA256SUMS.txt and SOURCE_COMMIT.txt. Next: user validates these exact final installers, then separately authorizes publication. No existing release assets were replaced.
+
 - The user authorized v0.1.1 preparation and a draft release. Frontend/Tauri/Cargo versions and root lockfile entries are synchronized to 0.1.1. This scope includes sending the release source to Actions, generating packages and uploading verified artifacts to the new draft. Public publication remains gated; v0.1.0 assets are retained.
 
 - The user reported that all native Ubuntu 22.04 acceptance tests passed for the correction package and requested README review/update. Record this as user-reported evidence without detailed logs, independently of automated Actions/package inspection/checksum evidence. Ubuntu 24.04 remains unvalidated; support claims are limited to Ubuntu 22.04 x64 and Windows x64.
