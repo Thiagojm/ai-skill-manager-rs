@@ -1,5 +1,10 @@
 # Work status
 
+## Harness management planning — October 2, 2026
+
+- The user approved the [harness management design](specs/2026-10-02-harness-management-design.md): filter built-ins by existing configuration or destination override, add/rename/remove custom registrations, retain unavailable custom destinations, and open the inspected destination in Explorer.
+- The [two-phase implementation plan](plans/2026-10-02-harness-management-plan.md) is prepared. Phase 1 covers built-in visibility and Explorer opening; Phase 2 covers custom registrations and shared identity. No implementation phase, commit/push, packaging, or release action is authorized by this planning approval. Stop after each phase for user validation and explicit continuation authorization.
+
 ## Completed checkpoint
 
 - Phase 1 read-only app is implemented and reviewed. Automated checks and 14 Rust tests passed on Windows on October 1, 2026.
