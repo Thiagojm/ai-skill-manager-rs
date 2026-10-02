@@ -11,6 +11,8 @@
 
 A fast, reliable, and user-friendly Windows desktop application to discover, compare, install, update, and manage local AI skills across your coding assistants.
 
+Ubuntu 22.04 x64 compilation and automated tests pass in GitHub Actions. The manual **Packages** workflow generates Windows NSIS and Ubuntu `.deb` validation artifacts with SHA-256 checksums and source commit identification, retained for 14 days. Download them from the workflow run's Artifacts section. Ubuntu desktop acceptance is pending; follow the [native validation checklist](docs/ubuntu-native-validation.md). Ubuntu 24.04 native behavior remains untested.
+
 Managing skills across multiple AI tools usually means manual folder copying, guessing which version is installed where, and risking accidental overwrites. **AI Skill Manager** solves this with a centralized, visual dashboard designed for seamless multi-agent skill maintenance.
 
 ---
