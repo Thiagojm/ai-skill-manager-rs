@@ -47,3 +47,7 @@ Exclude immediate `.git` entries from source/destination skill discovery, as req
 Use at most four standard-library workers for independent skill inventories. Keep command-level operation serialization. While a scan runs, prevent competing UI commands rather than queueing redundant scans. Reuse a single in-memory source snapshot only on tab switches; Refresh, settings/path changes, and post-operation scans rebuild it. Always rescan the active destination and retain complete mutation-time revalidation. Log inventory and total scan durations for diagnosis; no timestamp-only equality or persistent cache.
 
 Accepted after the user reported excellent scan behavior on October 1, 2026 and authorized commit/push. Latency acceptance is qualitative; no benchmark timings were supplied.
+
+## Manual validation packages — October 2, 2026
+
+The user authorized Ubuntu Phase 2 after accepting the Phase 1 checkpoint. Packages uses workflow_dispatch only, checks out github.sha, runs CI checks and explicit nsis/deb bundling, validates matching frontend/Tauri/Cargo versions, and retains separate package/checksum/source-commit artifacts for 14 days. The deb adds xdg-utils while retaining generated GTK/WebKit dependencies and existing icons. This does not authorize publication, version changes, or Phase 3. Commit/push of Phase 2 remains separately gated.

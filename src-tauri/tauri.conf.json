@@ -25,6 +25,11 @@
   },
   "bundle": {
     "active": true,
+    "linux": {
+      "deb": {
+        "depends": ["xdg-utils"]
+      }
+    },
     "targets": "all",
     "icon": [
       "icons/32x32.png",

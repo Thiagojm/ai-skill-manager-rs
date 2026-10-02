@@ -1,0 +1,119 @@
+name: Packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: nsis
+            artifact: windows-x64
+          - os: ubuntu-22.04
+            target: deb
+            artifact: ubuntu-amd64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install Ubuntu prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xdg-utils
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Check application versions
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const frontend = JSON.parse(fs.readFileSync('package.json')).version;
+          const tauri = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json')).version;
+          const cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8').split(/\n\[/)[0].match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+          assert.equal(frontend, tauri);
+          assert.equal(frontend, cargo);
+          JS
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - run: npm run tauri build -- --no-bundle -- --locked
+      - name: Build package
+        run: npm run tauri build -- --bundles ${{ matrix.target }} -- --locked
+      - name: Inspect Ubuntu package
+        if: runner.os == 'Linux'
+        run: |
+          shopt -s nullglob
+          packages=(src-tauri/target/release/bundle/deb/*.deb)
+          test "${#packages[@]}" -eq 1
+          package="${packages[0]}"
+          test "$(dpkg-deb -f "$package" Architecture)" = amd64
+          version=$(node -p "JSON.parse(require('fs').readFileSync('package.json')).version")
+          test "$(dpkg-deb -f "$package" Version)" = "$version"
+          dependencies=$(dpkg-deb -f "$package" Depends)
+          for dependency in xdg-utils libgtk-3-0 libwebkit2gtk-4.1-0; do
+            echo "$dependencies" | grep -Eq "(^|, )${dependency}( |,|$)"
+          done
+          unpacked=$(mktemp -d)
+          dpkg-deb -x "$package" "$unpacked"
+          test -x "$unpacked/usr/bin/ai-skill-manager"
+          desktop=$(find "$unpacked/usr/share/applications" -name '*.desktop' -print -quit)
+          test -n "$desktop"
+          grep -Eq '^Exec=.*ai-skill-manager' "$desktop"
+          grep -Eq '^Icon=.+$' "$desktop"
+          test -n "$(find "$unpacked/usr/share/icons" -name '*.png' -print -quit)"
+          dpkg-deb -I "$package"
+          dpkg-deb -c "$package"
+      - name: Collect package and checksums
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+          BUNDLE_TARGET: ${{ matrix.target }}
+        run: |
+          shopt -s nullglob
+          if [[ "$BUNDLE_TARGET" == deb ]]; then
+            packages=(src-tauri/target/release/bundle/deb/*.deb)
+          else
+            packages=(src-tauri/target/release/bundle/nsis/*-setup.exe)
+          fi
+          test "${#packages[@]}" -eq 1
+          mkdir -p package-artifact
+          cp "${packages[0]}" package-artifact/
+          package_name=$(basename "${packages[0]}")
+          printf '%s\n' "$SOURCE_COMMIT" > package-artifact/SOURCE_COMMIT.txt
+          cd package-artifact
+          sha256sum -- "$package_name" > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: package-artifact/
+          if-no-files-found: error
+          retention-days: 14

@@ -45,3 +45,9 @@
 - Signing, installer publication, Linux validation, project-local management, remote downloads, skill editing, automatic synchronization, and in-app restore are outside current authorization or v1 scope as defined in the design.
 
 - October 2, 2026: the user accepted the Phase 1 checkpoint, explicitly authorized its commit/push, and authorized Phase 2 manual package generation. Native interaction coverage was not itemized; actual CI evidence will be recorded separately. Phase 3 and publication remain gated.
+
+- Phase 1 committed/pushed as 6d02ed8. Actions run 37044204649 started on Windows 2022 and Ubuntu 22.04; final results pending. Phase 2 implementation adds dispatch-only Packages workflow, explicit NSIS/deb targets, exact event SHA checkout, version agreement guard, deb metadata/content/dependency inspection, SHA-256 and source identity, and separate 14-day artifacts. xdg-utils is added to deb runtime dependencies; generated GTK/WebKit dependencies and existing icons/identifier/version are retained. Workflow structure, version pass/failure checks, and diff whitespace passed locally. Phase 2 changes are not yet committed/pushed: that requires separate authorization before remote package generation/download verification. Phase 3 remains gated.
+
+- Local Phase 2 Windows optimized NSIS build passed with locked Cargo resolution. This validates local package generation only, not installation or downloaded Actions artifacts. Remote CI remains in progress; no pass is claimed.
+
+- October 2, 2026: actual CI run 37044204649 passed both Windows 2022 and Ubuntu 22.04, including locked clippy/tests and optimized no-bundle compilation. The user explicitly authorized Phase 2 commit/push, manual workflow execution, and continuation. Phase 3 native validation may begin only after both downloaded packages verify; publication remains unauthorized.
