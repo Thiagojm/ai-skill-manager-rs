@@ -75,7 +75,7 @@ export interface OperationEvent {
 
 export const loadSettings = () => invoke<SettingsResponse>('load_settings')
 export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings })
-export const scanSkills = (harness: Harness) => invoke<ScanResponse>('scan_skills', { harness })
+export const scanSkills = (harness: Harness, reuseSource = false) => invoke<ScanResponse>('scan_skills', { harness, reuseSource })
 export const prepareOperation = (action: OperationAction, harness: Harness, revision: string, selected: string[]) =>
   invoke<PrepareResponse>('prepare_operation', { action, harness, revision, selected })
 export const executeOperation = (

@@ -105,13 +105,13 @@ enum Entry {
 
 type Inventory = BTreeMap<String, Entry>;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct TreeScan {
     entries: Inventory,
     links: Vec<LinkWarning>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct SkillInfo {
     path: PathBuf,
     name: Option<String>,
@@ -121,10 +121,64 @@ struct SkillInfo {
     ambiguous: bool,
 }
 
+#[derive(Default)]
+pub(crate) struct SourceCache {
+    parent: Option<(PathBuf, PathBuf)>,
+    skills: BTreeMap<String, SkillInfo>,
+    trees: BTreeMap<PathBuf, Result<TreeScan, String>>,
+}
+
+// ponytail: at most four I/O workers per scan; tune only with measured disk contention.
+fn inventory_batch(paths: Vec<PathBuf>) -> BTreeMap<PathBuf, Result<TreeScan, String>> {
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
+    let chunk_size = paths.len().div_ceil(workers).max(1);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|path| {
+                            let started = std::time::Instant::now();
+                            let tree = inventory(path);
+                            eprintln!(
+                                "Skill inventory {}: {:?}",
+                                path.display(),
+                                started.elapsed()
+                            );
+                            (path.clone(), tree)
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("inventory worker panicked"))
+            .collect()
+    })
+}
+
+#[cfg(test)]
 pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, String> {
+    scan_cached(settings, harness, &mut SourceCache::default(), false)
+}
+
+pub(crate) fn scan_cached(
+    settings: &Settings,
+    harness: Harness,
+    cache: &mut SourceCache,
+    reuse_source: bool,
+) -> Result<ScanResponse, String> {
+    let started = std::time::Instant::now();
+    if !reuse_source {
+        *cache = SourceCache::default();
+    }
     let source = settings.source.clone();
     if let Some(path) = &source {
         if !path.is_dir() {
+            *cache = SourceCache::default();
             return Err(format!("Source folder is unavailable: {}", path.display()));
         }
     }
@@ -134,12 +188,35 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
     let resolved_source_path = source.as_deref().map(resolve_path).transpose()?;
     let resolved_destination_path = resolve_path(&destination)?;
     let mut warnings = Vec::new();
-    let mut source_skills = if let Some(path) = &source {
-        read_source(path)?
-    } else {
-        BTreeMap::new()
-    };
+    let cache_key = source.clone().zip(resolved_source_path.clone());
+    if !reuse_source || cache.parent != cache_key {
+        // Clear before reading so a failed refresh cannot revive an older snapshot.
+        *cache = SourceCache::default();
+        let source_skills = if let Some(path) = &source {
+            read_source(path)?
+        } else {
+            BTreeMap::new()
+        };
+        let trees = inventory_batch(
+            source_skills
+                .values()
+                .filter(|skill| !skill.ambiguous && skill.metadata_error.is_none())
+                .map(|skill| skill.path.clone())
+                .collect(),
+        );
+        cache.parent = cache_key;
+        cache.skills = source_skills;
+        cache.trees = trees;
+    }
+    let mut source_skills = cache.skills.clone();
     let mut installed = read_installed(&destination)?;
+    let mut installed_trees = inventory_batch(
+        installed
+            .values()
+            .filter(|skill| !skill.ambiguous)
+            .map(|skill| skill.path.clone())
+            .collect(),
+    );
 
     let keys: BTreeSet<String> = source_skills
         .keys()
@@ -220,12 +297,18 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
             }
         }
 
-        let source_tree = source_skill.as_ref().map(|skill| inventory(&skill.path));
-        let installed_tree = installed_skill.as_ref().map(|skill| inventory(&skill.path));
+        let source_tree = source_skill
+            .as_ref()
+            .map(|skill| cache.trees[&skill.path].clone());
+        let installed_tree = installed_skill
+            .as_ref()
+            .map(|skill| installed_trees.remove(&skill.path).unwrap());
         match (&source_skill, &installed_skill) {
             (Some(_), Some(_)) => match (source_tree.unwrap(), installed_tree.unwrap()) {
                 (Ok(source_tree), Ok(installed_tree)) => {
                     row.source_fingerprint = Some(tree_fingerprint(&source_tree));
+                    row.destination_fingerprint =
+                        Some(format!("tree:{}", tree_fingerprint(&installed_tree)));
                     let (equal, differences) = compare_trees(&source_tree, &installed_tree);
                     row.status = if equal { "identical" } else { "different" }.into();
                     row.differences = differences;
@@ -233,8 +316,6 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
                     row.destination_link_warnings = installed_tree.links.clone();
                     row.link_warnings.extend(source_tree.links);
                     row.link_warnings.extend(installed_tree.links);
-                    row.destination_fingerprint =
-                        operation_fingerprint(&installed_skill.as_ref().unwrap().path).ok();
                 }
                 (Err(error), _) | (_, Err(error)) => {
                     row.status = "error".into();
@@ -262,10 +343,9 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
             (None, Some(_)) => match installed_tree.unwrap() {
                 Ok(tree) => {
                     row.status = "installed_only".into();
+                    row.destination_fingerprint = Some(format!("tree:{}", tree_fingerprint(&tree)));
                     row.link_warnings = tree.links;
                     row.destination_link_warnings = row.link_warnings.clone();
-                    row.destination_fingerprint =
-                        operation_fingerprint(&installed_skill.as_ref().unwrap().path).ok();
                 }
                 Err(error) => {
                     row.status = "error".into();
@@ -324,6 +404,12 @@ pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, Strin
         "scan-{:016x}",
         NEXT_REVISION.fetch_add(1, Ordering::Relaxed)
     );
+    eprintln!(
+        "{} scan: {:?} (reuse source: {})",
+        harness.label(),
+        started.elapsed(),
+        reuse_source
+    );
     Ok(ScanResponse {
         revision,
         harness,
@@ -361,6 +447,9 @@ fn read_folders(parent: &Path, source: bool) -> Result<BTreeMap<String, SkillInf
     for entry in entries {
         let entry =
             entry.map_err(|error| format!("Could not enumerate {}: {error}", parent.display()))?;
+        if identity_key(&entry.file_name().to_string_lossy()) == identity_key(".git") {
+            continue;
+        }
         let path = entry.path();
         let metadata = fs::symlink_metadata(&path)
             .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
@@ -1201,6 +1290,63 @@ mod tests {
     }
 
     #[test]
+    fn cached_source_reuses_snapshot_and_refreshes_inputs() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        fs::create_dir_all(&destination).unwrap();
+        for name in ["A", "B", "C", "D", "E"] {
+            skill(&source, name, "before");
+        }
+        let mut settings = Settings {
+            source: Some(source.clone()),
+            destinations: [
+                (Harness::Codex, destination.clone()),
+                (Harness::Claude, destination.clone()),
+            ]
+            .into_iter()
+            .collect(),
+            ..Settings::default()
+        };
+        let mut cache = SourceCache::default();
+        let first = scan_cached(&settings, Harness::Codex, &mut cache, false).unwrap();
+        for row in &first.skills {
+            assert_eq!(
+                row.source_fingerprint,
+                Some(fingerprint(row.source_path.as_ref().unwrap()).unwrap())
+            );
+        }
+        skill(&source, "A", "after");
+        skill(&destination, "A", "after");
+        let cached = scan_cached(&settings, Harness::Claude, &mut cache, true).unwrap();
+        assert_eq!(
+            cached.skills[0].source_fingerprint,
+            first.skills[0].source_fingerprint
+        );
+        assert_eq!(cached.skills[0].status, "different");
+        let fresh = scan_cached(&settings, Harness::Claude, &mut cache, false).unwrap();
+        assert_ne!(
+            fresh.skills[0].source_fingerprint,
+            first.skills[0].source_fingerprint
+        );
+        assert_eq!(fresh.skills[0].status, "identical");
+        let other = temp.path().join("other");
+        skill(&other, "Other", "new source");
+        settings.source = Some(other);
+        let changed = scan_cached(&settings, Harness::Codex, &mut cache, true).unwrap();
+        assert!(!changed.skills.iter().any(|row| row.folder_name == "B"));
+        assert!(changed.skills.iter().any(|row| row.folder_name == "Other"));
+        let paths = vec![source.join("A"), source.join("B"), source.join("missing")];
+        let parallel = inventory_batch(paths.clone());
+        for path in paths {
+            assert_eq!(
+                parallel[&path].as_ref().map(tree_fingerprint),
+                inventory(&path).as_ref().map(tree_fingerprint)
+            );
+        }
+    }
+
+    #[test]
     fn scan_reports_all_four_comparison_statuses() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");
@@ -1213,9 +1359,17 @@ mod tests {
         skill(&source, "Different", "source");
         skill(&destination, "Different", "target");
         skill(&destination, "Installed", "installed only");
+        skill(&source, ".git", "repository metadata");
+        skill(&destination, ".git", "repository metadata");
+        file(
+            &source.join("Different").join(".git").join("config"),
+            b"nested git data",
+        );
         let settings = Settings {
             source: Some(source),
-            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            destinations: [(Harness::Codex, destination.clone())]
+                .into_iter()
+                .collect(),
             ..Settings::default()
         };
         let response = scan(&settings, Harness::Codex).unwrap();
@@ -1228,6 +1382,25 @@ mod tests {
         assert_eq!(statuses["Identical"], "identical");
         assert_eq!(statuses["Different"], "different");
         assert_eq!(statuses["Installed"], "installed_only");
+        assert!(!statuses.contains_key(".git"));
+        assert_eq!(statuses.len(), 4);
+        for row in &response.skills {
+            if row.destination_path.is_some() {
+                assert_eq!(
+                    row.destination_fingerprint,
+                    Some(operation_fingerprint(&destination.join(&row.folder_name)).unwrap())
+                );
+            }
+        }
+        let different = response
+            .skills
+            .iter()
+            .find(|row| row.folder_name == "Different")
+            .unwrap();
+        assert!(different
+            .differences
+            .iter()
+            .any(|difference| difference.path == ".git/config"));
     }
 
     #[test]

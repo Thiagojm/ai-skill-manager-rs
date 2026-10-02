@@ -13,10 +13,12 @@
 
 ## Current boundary
 
+- Post-v1 user request: hide `.git` from skill discovery and address slow scans. Implemented immediate-entry filtering and reuse of successful installed inventories instead of redundant traversal. The user then authorized concurrency and scan optimizations: up to four inventory workers, in-memory source reuse on tab switches, explicit refresh invalidation, timing logs, and blocked conflicting UI controls. Thirty Rust tests and delayed-scan mocked Edge QA passed, including cached-source stale mutation rejection; frontend check/build, clippy, and debug build passed. On October 1, 2026, the user reported that scanning was now excellent, accepted the correction, and authorized commit/push. No measured timings or detailed native logs were supplied.
+
 - Phase 1 is committed as `cf52e50`. The user subsequently configured `origin` at `https://github.com/Thiagojm/ai-skill-manager-rs.git` and reported publishing the repository.
 - Phase 1 native manual validation is user-reported; no direct interaction logs were collected.
 - On October 1, 2026, the user reported successful manual Phase 2 testing and authorized its commit/push and Phase 3 implementation. This is user-reported native evidence without detailed logs.
-- All three approved phases are accepted. Phase 3 commit/push is authorized. The request to continue has no corresponding Phase 4 in the approved plan; define the next scope before implementation. Packaging, signing, and release publication remain separately gated.
+- All three approved phases are accepted; Phase 3 is committed as `61bc88e`. The user requested GitHub release planning after the scan correction. Agree the release version, Windows artifact format, and draft/publication boundary before release implementation; the existing plan has no Phase 4.
 
 ## Remaining validation coverage
 
@@ -25,5 +27,5 @@
 
 ## Deferred scope
 
-- Define the next work scope; the approved v1 implementation plan is complete. Remaining Windows evidence gaps are listed above.
+- Next: define the GitHub release scope. Proposed minimum is Windows x64, the current 0.1.0 version, an NSIS installer, and a draft release for installer validation. This proposal is not yet approved. Remaining Windows evidence gaps are listed above.
 - Signing, installer publication, Linux validation, project-local management, remote downloads, skill editing, automatic synchronization, and in-app restore are outside current authorization or v1 scope as defined in the design.

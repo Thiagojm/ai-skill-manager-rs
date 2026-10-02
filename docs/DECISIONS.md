@@ -25,3 +25,13 @@ Deliver read-only comparison, then installation, then replacement/removal. Each 
 ## Windows recycling — implementation safeguard
 
 Use Windows `IFileOperation` with an absolute lexical item path and explicit recycle-on-delete flags. The generic `trash` Windows implementation canonicalizes the item path, which can follow a skill-root junction; its undo/warning flags also do not express the required force-recycle contract. Never resolve the final skill entry to its external target before recycling. Native disposable recycling and restoration evidence must remain separate from injected unit tests and desktop interaction evidence.
+
+## Repository metadata discovery — post-v1 adjustment
+
+Exclude immediate `.git` entries from source/destination skill discovery, as requested on October 1, 2026. This exclusion does not change complete-tree treatment of resources inside actual skills. Reuse successful scan inventories for operation baselines; mutation-time revalidation remains mandatory.
+
+## Scan concurrency and source snapshot - accepted correction
+
+Use at most four standard-library workers for independent skill inventories. Keep command-level operation serialization. While a scan runs, prevent competing UI commands rather than queueing redundant scans. Reuse a single in-memory source snapshot only on tab switches; Refresh, settings/path changes, and post-operation scans rebuild it. Always rescan the active destination and retain complete mutation-time revalidation. Log inventory and total scan durations for diagnosis; no timestamp-only equality or persistent cache.
+
+Accepted after the user reported excellent scan behavior on October 1, 2026 and authorized commit/push. Latency acceptance is qualitative; no benchmark timings were supplied.

@@ -58,7 +58,7 @@
   $: installSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('install'))).length
   $: updateSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('update'))).length
   $: uninstallSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('uninstall'))).length
-  $: controlsDisabled = choosing || saving || operationPreparing || operationRunning
+  $: controlsDisabled = loading || choosing || saving || operationPreparing || operationRunning
   $: document.documentElement.dataset.theme = settings.theme
 
   onMount(async () => {
@@ -74,13 +74,13 @@
     }
   })
 
-  async function refresh() {
-    if (operationRunning || operationPreparing) return
+  async function refresh(reuseSource = false) {
+    if (loading || operationRunning || operationPreparing) return
     const sequence = ++scanSequence
     loading = true
     loadError = ''
     try {
-      const response = await scanSkills(activeHarness)
+      const response = await scanSkills(activeHarness, reuseSource)
       if (sequence !== scanSequence) return
       scan = response
       selections[activeHarness] = selections[activeHarness].filter((name) => response.skills.some((skill) => skill.folderName === name))
@@ -150,7 +150,8 @@
     search = ''
     statusFilter = 'all'
     focusedFolder = ''
-    await refresh()
+    scan = null
+    await refresh(true)
   }
 
   function toggleSelection(skill: SkillRow) {
@@ -339,7 +340,7 @@
               <button class="button button-primary install-button" type="button" onclick={() => prepareAction('install')} disabled={!installSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for installation">Install{installSelectedCount ? ` (${installSelectedCount})` : ''}</button>
               <button class="button button-secondary install-button" type="button" onclick={() => prepareAction('update')} disabled={!updateSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for update">Update{updateSelectedCount ? ` (${updateSelectedCount})` : ''}</button>
               <button class="button button-quiet install-button" type="button" onclick={() => prepareAction('uninstall')} disabled={!uninstallSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for uninstallation">Uninstall{uninstallSelectedCount ? ` (${uninstallSelectedCount})` : ''}</button>
-              <button class="button button-quiet" type="button" onclick={refresh} disabled={loading || controlsDisabled} aria-label="Refresh comparison">↻ <span>Refresh</span></button>
+              <button class="button button-quiet" type="button" onclick={() => refresh()} disabled={loading || controlsDisabled} aria-label="Refresh comparison">↻ <span>Refresh</span></button>
             </div>
           </div>
           <div class="filters">

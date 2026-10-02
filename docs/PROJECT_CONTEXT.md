@@ -14,6 +14,8 @@ Link/junction content is materialized only after explicit acknowledgement. Windo
 
 ## Implementation map
 
+Post-v1 scan adjustment, October 1, 2026: discovery excludes immediate `.git` entries in source and destination parents. Nested `.git` resources inside a skill still participate in whole-tree comparison and copying. Successful installed-tree scans reuse their inventory for the operation baseline, avoiding a second full traversal and file hashing. Preparation/execution still independently revalidate current inputs; error fallback behavior is unchanged. A subsequent user-authorized correction adds up to four standard-library inventory workers and an in-memory source snapshot reused only during tab switches. Explicit Refresh, path/settings changes, and post-operation scans rebuild the snapshot; unavailable sources clear it. Destination inventories are always fresh. Source cache keys include the selected and resolved parent paths. Mutation preparation/execution still re-read current inputs. The UI blocks tabs, pickers, and theme changes while scanning and prevents duplicate refresh requests. Per-skill inventory and total scan durations are logged to the terminal. Thirty Rust tests, frontend check/build, clippy, debug build, and delayed-scan mocked Edge QA passed in the correction session. On October 1, 2026, the user reported that scanning was now excellent and accepted the correction; this is qualitative user-reported desktop evidence, without measured timings or detailed interaction logs.
+
 - `src/App.svelte`, `src/app.css`: interface and local state.
 - `src/api.ts`: typed settings, scan, preparation, and execution commands with progress channels.
 - `src-tauri/src/lib.rs`: Tauri command wrappers; scans run on a blocking worker.
@@ -44,6 +46,6 @@ A separate temporary native probe compiled the extracted production Windows recy
 
 ## Workspace note
 
-Phase 1 is committed as `cf52e50`; Phase 2 is committed as `b3f85be` and pushed to `origin/main`. On October 1, 2026, the user reported successful manual Phase 3 testing and authorized its commit/push and continuation. All three phases of the approved plan are accepted. No Phase 4 exists in that plan; the next scope must be defined before implementation. Packaging, signing, and release publication remain separately gated.
+Phases 1, 2, and 3 are committed as `cf52e50`, `b3f85be`, and `61bc88e` respectively. On October 1, 2026, the user reported successful manual Phase 3 testing and authorized its commit/push and continuation. All three phases of the approved plan are accepted. No Phase 4 exists in that plan; the next scope must be defined before implementation. The user accepted the post-v1 scan correction and authorized its commit/push on October 1, 2026. GitHub release planning is requested; no release configuration, installer, tag, or published release has been created for this scope. Packaging, signing, and publication scope still need to be agreed.
 
 Unused `.vite-template`, `static`, and local `.vscode` folders are ignored. Their cleanup was blocked by shell policy. Generated build/schema output is ignored; npm and Cargo lockfiles remain versioned.

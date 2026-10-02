@@ -960,11 +960,14 @@ mod tests {
             destinations: [(Harness::Codex, destination)].into_iter().collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let mut cache = manager::SourceCache::default();
+        manager::scan_cached(&settings_now, Harness::Codex, &mut cache, false).unwrap();
+        file(&baseline_skill.source.join(".hidden/nested.txt"), b"after");
+        let response =
+            manager::scan_cached(&settings_now, Harness::Codex, &mut cache, true).unwrap();
         let revision = response.revision.clone();
         let generation = begin_scan();
         record_scan(&response, generation);
-        file(&baseline_skill.source.join(".hidden/nested.txt"), b"after");
 
         let error = prepare_operation(
             &settings_now,

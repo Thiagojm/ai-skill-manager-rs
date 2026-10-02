@@ -19,7 +19,10 @@ fn save_settings(app: tauri::AppHandle, settings: settings::Settings) -> Result<
 async fn scan_skills(
     app: tauri::AppHandle,
     harness: manager::Harness,
+    reuse_source: bool,
+    cache: tauri::State<'_, std::sync::Arc<std::sync::Mutex<manager::SourceCache>>>,
 ) -> Result<manager::ScanResponse, String> {
+    let cache = cache.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = operations::acquire()?;
         let response = settings::load(&app);
@@ -28,7 +31,12 @@ async fn scan_skills(
         }
         let generation = operations::begin_scan();
         let settings = response.settings;
-        let response = manager::scan(&settings, harness)?;
+        let response = manager::scan_cached(
+            &settings,
+            harness,
+            &mut cache.lock().unwrap_or_else(|e| e.into_inner()),
+            reuse_source,
+        )?;
         operations::record_scan(&response, generation);
         Ok(response)
     })
@@ -78,6 +86,9 @@ async fn execute_operation(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(std::sync::Arc::new(std::sync::Mutex::new(
+            manager::SourceCache::default(),
+        )))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_settings,

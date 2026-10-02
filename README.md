@@ -6,6 +6,8 @@ Windows desktop app for comparing, installing, updating, and uninstalling comple
 
 Restore locked JavaScript dependencies with `npm.cmd ci`, then start the app with `npm.cmd run tauri dev`. The app remembers the last accessible source folder and stores destination overrides and theme in its local app settings file.
 
+Switching harness tabs reuses the last source snapshot and reads the selected destination again. Use Refresh after externally editing the source. Refresh, path changes, and completed operations rebuild the source snapshot. Tabs and folder controls are disabled during scans. Development terminal output includes per-skill inventory and total scan durations for diagnosing slow folders.
+
 ## Checks
 
 Run `npm.cmd run check`, `npm.cmd run build`, and these Rust checks:
