@@ -257,7 +257,7 @@ fn save_file(file: &Path, settings: Settings) -> Result<(), String> {
     {
         validate_source(&settings)?;
     }
-    validate_custom_destinations(&settings, previous.as_ref())?;
+    validate_destinations(&settings, previous.as_ref())?;
 
     let bytes = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
     let parent = file
@@ -324,20 +324,25 @@ fn valid_custom_id(id: &str) -> bool {
         })
 }
 
-fn validate_custom_destinations(
-    settings: &Settings,
-    previous: Option<&Settings>,
-) -> Result<(), String> {
-    for id in settings.custom_harnesses.keys() {
-        let destination = &settings.destinations[id];
+fn validate_destinations(settings: &Settings, previous: Option<&Settings>) -> Result<(), String> {
+    for (id, destination) in &settings.destinations {
         let changed = previous.and_then(|old| old.destinations.get(id)) != Some(destination);
         if changed {
-            fs::read_dir(destination).map_err(|error| {
-                format!(
-                    "Custom harness destination is not an accessible directory: {}: {error}",
-                    destination.display()
-                )
-            })?;
+            if !destination.is_absolute() {
+                return Err("Destination folder must use an absolute path.".into());
+            }
+            match fs::read_dir(destination) {
+                Ok(_) => {}
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        && !settings.custom_harnesses.contains_key(id) => {}
+                Err(error) => {
+                    return Err(format!(
+                        "Destination is not an accessible directory: {}: {error}",
+                        destination.display()
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -345,6 +350,9 @@ fn validate_custom_destinations(
 
 fn validate_source(settings: &Settings) -> Result<(), String> {
     if let Some(source) = &settings.source {
+        if !source.is_absolute() {
+            return Err("Source folder must use an absolute path.".into());
+        }
         fs::read_dir(source).map_err(|error| {
             format!(
                 "Source folder is not accessible: {}: {error}",
@@ -528,7 +536,7 @@ mod tests {
         settings
             .custom_harnesses
             .insert(CUSTOM.into(), "Research".into());
-        validate_custom_destinations(&settings, None).unwrap();
+        validate_destinations(&settings, None).unwrap();
         let file = root.path().join("settings.json");
         save_file(&file, settings.clone()).unwrap();
         let previous = settings.clone();
@@ -537,8 +545,8 @@ mod tests {
         renamed
             .custom_harnesses
             .insert(CUSTOM.into(), "Renamed".into());
-        validate_custom_destinations(&renamed, Some(&previous)).unwrap();
-        assert!(validate_custom_destinations(&renamed, None).is_err());
+        validate_destinations(&renamed, Some(&previous)).unwrap();
+        assert!(validate_destinations(&renamed, None).is_err());
         let original = fs::read(&file).unwrap();
         let mut invalid_path = previous.clone();
         invalid_path
@@ -552,6 +560,37 @@ mod tests {
         assert!(error.is_none());
         assert_eq!(reloaded.custom_harnesses[CUSTOM], "Renamed");
         assert_eq!(reloaded.theme, Theme::Light);
+    }
+
+    #[test]
+    fn typed_paths_reject_relative_and_file_destinations_without_saving() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("settings.json");
+        let source = root.path().join("source");
+        fs::create_dir(&source).unwrap();
+        let missing = root.path().join("missing");
+        let original = Settings {
+            source: Some(source.clone()),
+            destinations: [("codex".into(), missing.clone())].into(),
+            ..Settings::default()
+        };
+        save_file(&file, original.clone()).unwrap();
+        assert!(!missing.exists());
+        let bytes = fs::read(&file).unwrap();
+        let not_directory = root.path().join("file");
+        fs::write(&not_directory, b"keep").unwrap();
+        for destination in [PathBuf::from("relative"), not_directory] {
+            let mut next = original.clone();
+            next.destinations.insert("codex".into(), destination);
+            assert!(save_file(&file, next).is_err());
+            assert_eq!(fs::read(&file).unwrap(), bytes);
+        }
+        for invalid_source in [PathBuf::from("relative"), missing] {
+            let mut next = original.clone();
+            next.source = Some(invalid_source);
+            assert!(save_file(&file, next).is_err());
+            assert_eq!(fs::read(&file).unwrap(), bytes);
+        }
     }
 
     #[test]

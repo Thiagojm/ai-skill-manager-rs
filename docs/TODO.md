@@ -1,5 +1,12 @@
 # Work status
 
+## Ubuntu usability corrections — October 2, 2026
+
+- The user reported confusing linked-copy comparison, repeated YAML/missing-destination notices, desktop metadata/icon issues, and an oversized GTK folder picker. They explicitly authorized local corrections and manual path entry. Commit/push, package regeneration and publication are not authorized for this scope.
+- Implemented unique confirmation warnings, a single actionable unavailable-destination notice, and an explanation of materialized-link entry-type differences. Source/destination paths can be entered in an accessible dialog and submitted with Enter; custom folder paths are editable. Backend validation rejects changed relative paths, inaccessible sources and file-valued destinations without changing saved settings. Missing built-in destinations remain allowed for confirmed installation; custom destinations must exist.
+- Linux bundling uses existing standard-density 32/128/512 icons. The packaging workflow normalizes the desktop filename to the existing identifier and checks category, unique launcher, and PNG dimensions. No version, identifier, dependencies or release assets changed.
+- Windows frontend check/build, Rust fmt/clippy/debug build and all 44 tests passed. Mocked Edge checks passed source/destination Enter saves, failed-save retention, Escape cancellation, editable custom path, missing-folder notice, link explanation, and dialog fit at 920x620. This does not establish native GTK behavior or a regenerated package. Actual Ubuntu package checks and native acceptance remain pending.
+
 ## Ubuntu support — October 2, 2026
 
 - The user approved the [Ubuntu design](specs/2026-10-02-ubuntu-support-design.md) and [three-phase plan](plans/2026-10-02-ubuntu-support-plan.md) in chat and explicitly requested implementation. Phase 1 is the current scope; Phase 2 packaging and Phase 3 native acceptance require separate authorization after each validation gate.

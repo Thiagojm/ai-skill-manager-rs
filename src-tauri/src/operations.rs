@@ -163,7 +163,9 @@ pub fn record_scan(scan: &ScanResponse, generation: u64) {
         .filter_map(|row| {
             let mut warnings = row.warnings.clone();
             if let Some(error) = &row.error {
-                warnings.push(error.clone());
+                if !warnings.contains(error) {
+                    warnings.push(error.clone());
+                }
             }
             Some((
                 identity_key(&row.folder_name),
@@ -374,7 +376,12 @@ pub fn prepare_operation(
                             .iter()
                             .flat_map(|installed| installed.warnings.clone()),
                     )
-                    .collect(),
+                    .fold(Vec::new(), |mut warnings, warning| {
+                        if !warnings.contains(&warning) {
+                            warnings.push(warning);
+                        }
+                        warnings
+                    }),
             })
             .collect(),
         skipped,
@@ -919,6 +926,38 @@ mod tests {
             fingerprint: manager::fingerprint(&path).unwrap(),
             links: Vec::new(),
             warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn confirmation_metadata_warnings_are_unique_for_update_and_uninstall() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        let original = skill(&source, "One", b"new");
+        let installed = skill(&destination, "One", b"old");
+        for path in [&original.source, &installed.source] {
+            file(&path.join("SKILL.md"), b"no YAML frontmatter");
+        }
+        let settings = Settings {
+            source: Some(source),
+            destinations: [("codex".into(), destination)].into(),
+            ..Settings::default()
+        };
+        for action in [OperationAction::Update, OperationAction::Uninstall] {
+            let scan = manager::scan(&settings, "codex").unwrap();
+            record_scan(&scan, begin_scan());
+            let prepared = prepare_operation(
+                &settings,
+                "codex".into(),
+                &scan.revision,
+                action,
+                &["One".into()],
+            )
+            .unwrap();
+            assert_eq!(prepared.eligible[0].warnings.len(), 1);
+            assert!(prepared.eligible[0].warnings[0].contains("YAML"));
         }
     }
 

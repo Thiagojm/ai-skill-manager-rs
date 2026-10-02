@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
+    "category": "DeveloperTool",
     "linux": {
       "deb": {
         "depends": ["xdg-utils"]

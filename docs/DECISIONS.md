@@ -1,5 +1,9 @@
 # Durable decisions
 
+## Manual folder paths and Linux desktop metadata — October 2, 2026
+
+Keep native folder pickers and offer literal absolute path entry through the existing backend settings flow. Do not replace GTK or add a dialog dependency to control its window geometry. Preserve structural link comparisons and explain materialization instead of claiming linked sources are identical to ordinary copies. Linux icons use ordinary-density filenames so Tauri's physical-size-based layout matches their PNG dimensions. Normalize only the generated deb desktop filename in the manual Packages workflow, retaining the existing product name, version and identifier; do not rename the application to influence packaging.
+
 ## Ubuntu support and CI — approved October 2, 2026
 
 The [Ubuntu extension design](specs/2026-10-02-ubuntu-support-design.md) targets Ubuntu 22.04+ x64 alongside Windows, with actual desktop validation required before support claims. Keep the existing operation/settings architecture and dependencies. Use xdg-open with one validated absolute argument on Linux and retain Explorer on Windows. Linux ordinary regular-file permissions (`0o777`) participate in comparison, stage verification, and stale-input protection; copies use stdlib permission preservation. Directory modes follow creation/umask; ownership/ACLs/xattrs are excluded. System-trash wording covers both platforms without permanent-delete fallback.

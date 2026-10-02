@@ -68,6 +68,16 @@ jobs:
       - run: npm run tauri build -- --no-bundle -- --locked
       - name: Build package
         run: npm run tauri build -- --bundles ${{ matrix.target }} -- --locked
+      - name: Normalize Ubuntu desktop filename
+        if: runner.os == 'Linux'
+        run: |
+          shopt -s nullglob
+          packages=(src-tauri/target/release/bundle/deb/*.deb)
+          test "${#packages[@]}" -eq 1
+          unpacked=$(mktemp -d)
+          dpkg-deb --raw-extract "${packages[0]}" "$unpacked"
+          mv "$unpacked/usr/share/applications/AI Skill Manager.desktop" "$unpacked/usr/share/applications/com.tjm.ai-skill-manager.desktop"
+          dpkg-deb --build --root-owner-group "$unpacked" "${packages[0]}"
       - name: Inspect Ubuntu package
         if: runner.os == 'Linux'
         run: |
@@ -85,11 +95,23 @@ jobs:
           unpacked=$(mktemp -d)
           dpkg-deb -x "$package" "$unpacked"
           test -x "$unpacked/usr/bin/ai-skill-manager"
-          desktop=$(find "$unpacked/usr/share/applications" -name '*.desktop' -print -quit)
-          test -n "$desktop"
+          desktop="$unpacked/usr/share/applications/com.tjm.ai-skill-manager.desktop"
+          test -f "$desktop"
+          test "$(find "$unpacked/usr/share/applications" -name '*.desktop' | wc -l)" -eq 1
+          grep -Eq '^Categories=.*Development;' "$desktop"
           grep -Eq '^Exec=.*ai-skill-manager' "$desktop"
           grep -Eq '^Icon=.+$' "$desktop"
           test -n "$(find "$unpacked/usr/share/icons" -name '*.png' -print -quit)"
+          test -z "$(find "$unpacked/usr/share/icons" -type d -name '*@2')"
+          node --input-type=module - "$unpacked" <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          for (const size of [32, 128, 512]) {
+            const png = fs.readFileSync(`${process.argv[2]}/usr/share/icons/hicolor/${size}x${size}/apps/ai-skill-manager.png`);
+            assert.equal(png.readUInt32BE(16), size);
+            assert.equal(png.readUInt32BE(20), size);
+          }
+          JS
           dpkg-deb -I "$package"
           dpkg-deb -c "$package"
       - name: Collect package and checksums

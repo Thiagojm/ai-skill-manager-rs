@@ -40,6 +40,9 @@
   let installDialog: HTMLDialogElement
   let addDialog: HTMLDialogElement
   let manageDialog: HTMLDialogElement
+  let pathDialog: HTMLDialogElement
+  let pathKind: 'source' | 'destination' = 'source'
+  let pathValue = ''
   let addName = ''
   let addDestination = ''
   let renameValue = ''
@@ -129,6 +132,24 @@
 
   function selectionsFor(harness: Harness) { return selections[harness] ?? [] }
 
+  function enterPath(kind: 'source' | 'destination') {
+    if (controlsDisabled || (kind === 'destination' && !activeHarness)) return
+    pathKind = kind
+    pathValue = (kind === 'source' ? settings.source : settings.destinations[activeHarness!]) ?? ''
+    loadError = ''
+    pathDialog.showModal()
+  }
+
+  async function savePath(event: SubmitEvent) {
+    event.preventDefault()
+    if (controlsDisabled || !pathValue.trim()) return
+    const path = pathValue.trim()
+    const next = pathKind === 'source'
+      ? { ...settings, source: path }
+      : { ...settings, destinations: { ...settings.destinations, [activeHarness!]: path } }
+    if (await persist(next, pathKind)) pathDialog.close()
+  }
+
   async function chooseSource() {
     if (controlsDisabled) return
     choosing = true
@@ -180,8 +201,10 @@
       else if (changed === 'destination' && previousHarness) selections[previousHarness] = []
       focusedFolder = ''
       await refresh()
+      return true
     } catch (error) {
       loadError = String(error)
+      return false
     } finally {
       saving = false
     }
@@ -394,9 +417,9 @@
         <p>Choose a parent folder. Each immediate subfolder is scanned as one skill.</p>
         <code class:empty={!settings.source}>{formatPath(settings.source)}</code>
       </div>
-      <button class="button button-primary" type="button" onclick={chooseSource} disabled={controlsDisabled}>
+      <div class="destination-actions"><button class="button button-primary" type="button" onclick={chooseSource} disabled={controlsDisabled}>
         <span aria-hidden="true">＋</span> Choose folder…
-      </button>
+      </button><button class="button button-secondary" type="button" onclick={() => enterPath('source')} disabled={controlsDisabled}>Enter path…</button></div>
     </section>
 
     {#if settingsError}
@@ -457,6 +480,7 @@
         <div class="destination-label"><span class="eyebrow">Managed destination</span><code>{formatPath(scan?.destinationPath ?? settings.destinations[activeHarness])}</code></div>
         <div class="destination-actions">
           <button class="button button-secondary" type="button" onclick={chooseDestination} disabled={controlsDisabled}>Choose destination…</button>
+          <button class="button button-secondary" type="button" onclick={() => enterPath('destination')} disabled={controlsDisabled}>Enter path…</button>
           {#if !activeDescriptor?.builtIn}<button class="button button-secondary" type="button" onclick={openManageDialog} disabled={controlsDisabled}>Manage harness</button>{/if}
           <button class="button button-secondary" type="button" onclick={openDestination} disabled={controlsDisabled}>Open folder</button>
         </div>
@@ -467,7 +491,7 @@
       {/if}
       {#if scan?.warnings.length}
         <div class="scan-notices">
-          {#each scan.warnings as warning}
+          {#each scan.warnings.filter((warning) => activeDescriptor?.destinationAvailable !== false || warning !== 'The configured destination folder does not exist yet.') as warning}
             <p class="notice notice-info"><span class="notice-icon" aria-hidden="true">i</span>{warning}</p>
           {/each}
         </div>
@@ -543,6 +567,7 @@
             {/if}
             {#if focusedSkill.linkWarnings.length}
               <div class="detail-warning link-list"><strong>Links and junctions</strong>
+                <p>Copies replace links with ordinary files and folders. A linked source can remain Different after Install or Update because entry types differ, even when content matches.</p>
                 {#each focusedSkill.linkWarnings as link}<p><code>{link.path}</code><span>→</span><code>{link.target}</code></p>{/each}
               </div>
             {/if}
@@ -563,10 +588,20 @@
     <footer><span>Local skill folder manager</span><span>Files and scripts stay on this device</span></footer>
   </main>
 
+  <dialog bind:this={pathDialog} class="operation-dialog management-dialog" aria-labelledby="path-title" oncancel={(event) => { if (saving) event.preventDefault() }}>
+    <form onsubmit={savePath}>
+      <div class="dialog-heading"><h2 id="path-title">Enter {pathKind} folder path</h2><p>Use an absolute path. Paths are literal; ~ and environment variables are not expanded.</p></div>
+      <label class="management-field">Folder path<input bind:value={pathValue} autocomplete="off" required disabled={controlsDisabled} /></label>
+      {#if loadError}<p class="dialog-error" role="alert">{loadError}</p>{/if}
+      <div class="dialog-actions"><button class="button button-secondary" type="button" onclick={() => pathDialog.close()} disabled={controlsDisabled}>Cancel</button><button class="button button-primary" type="submit" disabled={controlsDisabled || !pathValue.trim()}>Use folder</button></div>
+    </form>
+  </dialog>
+
   <dialog bind:this={addDialog} class="operation-dialog management-dialog" aria-labelledby="add-harness-title" oncancel={(event) => { if (saving || choosing) event.preventDefault() }}>
     <div class="dialog-heading"><span class="eyebrow">Custom harness</span><h2 id="add-harness-title">Add harness</h2><p>Register an existing skills folder. The folder will stay where it is.</p></div>
     <label class="management-field">Name<input bind:value={addName} autocomplete="off" disabled={controlsDisabled} /></label>
-    <div class="management-folder"><span class="eyebrow">Skills folder</span><code>{addDestination || 'Choose an existing folder'}</code><button class="button button-secondary" type="button" onclick={chooseCustomFolder} disabled={controlsDisabled}>Choose folder…</button></div>
+    <label class="management-field">Skills folder<input bind:value={addDestination} placeholder="Absolute path to an existing folder" autocomplete="off" disabled={controlsDisabled} /></label>
+    <button class="button button-secondary" type="button" onclick={chooseCustomFolder} disabled={controlsDisabled}>Choose folder…</button>
     {#if loadError}<p class="dialog-error" role="alert">{loadError}</p>{/if}
     <div class="dialog-actions"><button class="button button-secondary" type="button" onclick={() => addDialog.close()} disabled={controlsDisabled}>Cancel</button><button class="button button-primary" type="button" onclick={addHarness} disabled={controlsDisabled || !addName.trim() || !addDestination}>Add harness</button></div>
   </dialog>
