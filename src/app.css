@@ -98,8 +98,12 @@ h1, h2, h3, p { margin-top: 0; }
 .harness-tabs button.active::after { content: ""; position: absolute; bottom: -1px; left: 12px; right: 12px; height: 2px; background: var(--accent); border-radius: 3px 3px 0 0; }
 .harness-glyph { color: var(--accent); font-size: 15px; }
 .destination-bar { min-height: 72px; display: flex; align-items: center; gap: 24px; justify-content: space-between; padding: 13px 24px; border-bottom: 1px solid var(--border); background: var(--panel-raised); }
+.destination-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .destination-label { min-width: 0; display: grid; gap: 5px; }
 .destination-label code { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: var(--muted); }
+.no-harness-state { min-height: 440px; padding: 40px 22px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.no-harness-state h2 { margin: 13px 0 6px; font-size: 15px; font-weight: 600; }
+.no-harness-state p { max-width: 330px; margin: 0 0 18px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .comparison-panel { min-height: 440px; display: grid; grid-template-columns: minmax(390px, .95fr) minmax(420px, 1.05fr); }
 .list-pane { min-width: 0; position: relative; border-right: 1px solid var(--border); }
 .list-toolbar { min-height: 62px; height: auto; padding: 8px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }

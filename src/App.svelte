@@ -5,11 +5,13 @@
   import {
     loadSettings,
     saveSettings,
+    openHarnessFolder,
     scanSkills,
     prepareOperation,
     executeOperation,
     type OperationAction,
     type Harness,
+    type HarnessDescriptor,
     type OperationEvent,
     type PrepareResponse,
     type ScanResponse,
@@ -17,19 +19,13 @@
     type SkillRow,
   } from './api'
 
-  const harnesses: { id: Harness; label: string }[] = [
-    { id: 'codex', label: 'Codex' },
-    { id: 'claude', label: 'Claude Code' },
-    { id: 'antigravity', label: 'Antigravity IDE' },
-    { id: 'open_code', label: 'OpenCode' },
-  ]
-
+  let harnesses: HarnessDescriptor[] = []
   let settings: Settings = { source: null, destinations: {}, theme: 'dark' }
   let settingsFile = ''
   let settingsError = ''
   let loadError = ''
   let scan: ScanResponse | null = null
-  let activeHarness: Harness = 'codex'
+  let activeHarness: Harness | null = null
   let search = ''
   let statusFilter = 'all'
   let focusedFolder = ''
@@ -55,36 +51,41 @@
     return matchesSearch && (statusFilter === 'all' || skill.status === statusFilter)
   })
   $: focusedSkill = scan?.skills.find((skill) => skill.folderName === focusedFolder) ?? null
-  $: selectedCount = selections[activeHarness].length
-  $: installSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('install'))).length
-  $: updateSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('update'))).length
-  $: uninstallSelectedCount = selections[activeHarness].filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('uninstall'))).length
+  $: activeSelections = activeHarness ? selections[activeHarness] : []
+  $: selectedCount = activeSelections.length
+  $: installSelectedCount = activeSelections.filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('install'))).length
+  $: updateSelectedCount = activeSelections.filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('update'))).length
+  $: uninstallSelectedCount = activeSelections.filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('uninstall'))).length
   $: controlsDisabled = loading || choosing || saving || operationPreparing || operationRunning
   $: document.documentElement.dataset.theme = settings.theme
 
   onMount(async () => {
     try {
-      const response = await loadSettings()
-      settings = response.settings
-      settingsFile = response.settingsFile
-      settingsError = response.error ?? ''
-      if (settings.source) focusedFolder = ''
-      await refresh()
+      await refresh(false, true)
     } catch (error) {
       loadError = String(error)
     }
   })
 
-  async function refresh(reuseSource = false) {
+  async function refresh(reuseSource = false, reloadRegistry = false) {
     if (loading || operationRunning || operationPreparing) return
     const sequence = ++scanSequence
     loading = true
     loadError = ''
     try {
-      const response = await scanSkills(activeHarness, reuseSource)
+      const previousHarness = activeHarness
+      if (reloadRegistry) applySettingsResponse(await loadSettings())
+      const harness = activeHarness
+      if (!harness) {
+        scan = null
+        focusedFolder = ''
+        selections = { codex: [], claude: [], antigravity: [], open_code: [] }
+        return
+      }
+      const response = await scanSkills(harness, previousHarness === harness && reuseSource)
       if (sequence !== scanSequence) return
       scan = response
-      selections[activeHarness] = selections[activeHarness].filter((name) => response.skills.some((skill) => skill.folderName === name))
+      selections[harness] = selections[harness].filter((name) => response.skills.some((skill) => skill.folderName === name))
       if (!response.skills.some((skill) => skill.folderName === focusedFolder)) {
         focusedFolder = response.skills[0]?.folderName ?? ''
       }
@@ -95,6 +96,29 @@
       }
     } finally {
       if (sequence === scanSequence) loading = false
+    }
+  }
+
+  function applySettingsResponse(response: Awaited<ReturnType<typeof loadSettings>>) {
+    settings = response.settings
+    settingsFile = response.settingsFile
+    settingsError = response.error ?? ''
+    harnesses = response.harnesses.filter((harness) => harness.visible)
+    for (const descriptor of response.harnesses) {
+      if (!descriptor.visible) selections[descriptor.id] = []
+    }
+    const previous = activeHarness
+    activeHarness = harnesses.some((harness) => harness.id === previous)
+      ? previous
+      : harnesses[0]?.id ?? null
+    if (!activeHarness) {
+      scan = null
+      focusedFolder = ''
+      selections = { codex: [], claude: [], antigravity: [], open_code: [] }
+    } else if (previous !== activeHarness) {
+      scan = null
+      focusedFolder = ''
+      if (previous) selections[previous] = []
     }
   }
 
@@ -113,7 +137,7 @@
   }
 
   async function chooseDestination() {
-    if (controlsDisabled) return
+    if (!activeHarness || controlsDisabled) return
     choosing = true
     loadError = ''
     try {
@@ -126,16 +150,27 @@
     }
   }
 
+  async function openDestination() {
+    if (!activeHarness || controlsDisabled) return
+    loadError = ''
+    try {
+      await openHarnessFolder(activeHarness)
+    } catch (error) {
+      loadError = String(error)
+    }
+  }
+
   async function persist(next: Settings, changed: 'source' | 'destination' | 'theme') {
     if (saving || operationPreparing || operationRunning) return
     saving = true
     loadError = ''
     try {
       await saveSettings(next)
-      settings = next
+      const previousHarness = activeHarness
+      applySettingsResponse(await loadSettings())
       settingsError = ''
       if (changed === 'source') selections = { codex: [], claude: [], antigravity: [], open_code: [] }
-      else if (changed === 'destination') selections[activeHarness] = []
+      else if (changed === 'destination' && previousHarness) selections[previousHarness] = []
       focusedFolder = ''
       await refresh()
     } catch (error) {
@@ -146,7 +181,7 @@
   }
 
   async function switchHarness(harness: Harness) {
-    if (harness === activeHarness || controlsDisabled) return
+    if (harness === activeHarness || controlsDisabled || !harnesses.some((item) => item.id === harness)) return
     activeHarness = harness
     search = ''
     statusFilter = 'all'
@@ -156,6 +191,7 @@
   }
 
   function toggleSelection(skill: SkillRow) {
+    if (!activeHarness) return
     const selected = new Set(selections[activeHarness])
     if (selected.has(skill.folderName)) selected.delete(skill.folderName)
     else selected.add(skill.folderName)
@@ -189,7 +225,7 @@
 
   async function prepareAction(action: OperationAction) {
     const eligibleCount = action === 'install' ? installSelectedCount : action === 'update' ? updateSelectedCount : uninstallSelectedCount
-    if (!scan || !eligibleCount || loading || controlsDisabled) return
+    if (!activeHarness || !scan || !eligibleCount || loading || controlsDisabled) return
     operationPreparing = true
     operationError = ''
     try {
@@ -205,7 +241,7 @@
   }
 
   async function runOperation() {
-    if (!preparedInstall || operationRunning) return
+    if (!activeHarness || !preparedInstall || operationRunning) return
     if (preparedInstall.eligible.some((skill) => skill.linkWarnings.length) && !acknowledgeLinks) return
     operationRunning = true
     operationError = ''
@@ -224,6 +260,10 @@
   }
 
   async function refreshAfterOperation() {
+    if (!activeHarness) {
+      scan = null
+      return
+    }
     const sequence = ++scanSequence
     loading = true
     try {
@@ -293,6 +333,14 @@
     {/if}
 
     <section class="workspace" aria-label="Harness comparison">
+      {#if !activeHarness}
+        <div class="no-harness-state">
+          <span class="empty-icon" aria-hidden="true">▧</span>
+          <h2>No configured harnesses found</h2>
+          <p>No built-in harness configuration was detected. Configure a supported harness, then refresh.</p>
+          <button class="button button-secondary" type="button" onclick={() => refresh(false, true)} disabled={controlsDisabled}>Refresh</button>
+        </div>
+      {:else}
       <div class="harness-tabs" aria-label="Harness destinations" role="tablist" aria-orientation="horizontal" tabindex="0">
         {#each harnesses as harness (harness.id)}
           <button
@@ -307,9 +355,12 @@
               if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
                 event.preventDefault()
                 const direction = event.key === 'ArrowRight' ? 1 : -1
-                const next = harnesses[(harnesses.findIndex((item) => item.id === activeHarness) + direction + harnesses.length) % harnesses.length]
-                void switchHarness(next.id)
-                document.getElementById(`tab-${next.id}`)?.focus()
+                if (harnesses.length > 1) {
+                  const current = harnesses.findIndex((item) => item.id === harness.id)
+                  const next = harnesses[(current + direction + harnesses.length) % harnesses.length]
+                  void switchHarness(next.id)
+                  document.getElementById(`tab-${next.id}`)?.focus()
+                }
               }
             }}
             disabled={controlsDisabled}
@@ -322,7 +373,10 @@
 
       <div class="destination-bar">
         <div class="destination-label"><span class="eyebrow">Managed destination</span><code>{formatPath(scan?.destinationPath ?? settings.destinations[activeHarness])}</code></div>
-        <button class="button button-secondary" type="button" onclick={chooseDestination} disabled={controlsDisabled}>Choose destination…</button>
+        <div class="destination-actions">
+          <button class="button button-secondary" type="button" onclick={chooseDestination} disabled={controlsDisabled}>Choose destination…</button>
+          <button class="button button-secondary" type="button" onclick={openDestination} disabled={controlsDisabled}>Open folder</button>
+        </div>
       </div>
 
       {#if scan?.warnings.length}
@@ -341,7 +395,7 @@
               <button class="button button-primary install-button" type="button" onclick={() => prepareAction('install')} disabled={!installSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for installation">Install{installSelectedCount ? ` (${installSelectedCount})` : ''}</button>
               <button class="button button-secondary install-button" type="button" onclick={() => prepareAction('update')} disabled={!updateSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for update">Update{updateSelectedCount ? ` (${updateSelectedCount})` : ''}</button>
               <button class="button button-quiet install-button" type="button" onclick={() => prepareAction('uninstall')} disabled={!uninstallSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for uninstallation">Uninstall{uninstallSelectedCount ? ` (${uninstallSelectedCount})` : ''}</button>
-              <button class="button button-quiet" type="button" onclick={() => refresh()} disabled={loading || controlsDisabled} aria-label="Refresh comparison">↻ <span>Refresh</span></button>
+              <button class="button button-quiet" type="button" onclick={() => refresh(false, true)} disabled={loading || controlsDisabled} aria-label="Refresh comparison">↻ <span>Refresh</span></button>
             </div>
           </div>
           <div class="filters">
@@ -418,6 +472,7 @@
           {/if}
         </aside>
       </div>
+      {/if}
     </section>
     <footer><span>Local skill folder manager</span><span>Files and scripts stay on this device</span></footer>
   </main>

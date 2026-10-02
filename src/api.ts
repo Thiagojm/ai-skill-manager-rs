@@ -4,6 +4,14 @@ export type Harness = 'codex' | 'claude' | 'antigravity' | 'open_code'
 export type Theme = 'dark' | 'light'
 export type OperationAction = 'install' | 'update' | 'uninstall'
 
+export interface HarnessDescriptor {
+  id: Harness
+  label: string
+  builtIn: boolean
+  visible: boolean
+  destinationAvailable: boolean
+}
+
 export interface Settings {
   source: string | null
   destinations: Partial<Record<Harness, string>>
@@ -14,6 +22,7 @@ export interface SettingsResponse {
   settings: Settings
   settingsFile: string
   error: string | null
+  harnesses: HarnessDescriptor[]
 }
 
 export interface Difference {
@@ -75,6 +84,7 @@ export interface OperationEvent {
 
 export const loadSettings = () => invoke<SettingsResponse>('load_settings')
 export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings })
+export const openHarnessFolder = (harness: Harness) => invoke<void>('open_harness_folder', { harness })
 export const scanSkills = (harness: Harness, reuseSource = false) => invoke<ScanResponse>('scan_skills', { harness, reuseSource })
 export const prepareOperation = (action: OperationAction, harness: Harness, revision: string, selected: string[]) =>
   invoke<PrepareResponse>('prepare_operation', { action, harness, revision, selected })

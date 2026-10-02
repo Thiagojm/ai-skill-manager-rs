@@ -10,6 +10,24 @@ use tauri::{AppHandle, Manager};
 
 use crate::manager::Harness;
 
+#[derive(Clone, Debug)]
+struct ConfigurationRoots {
+    codex: Option<PathBuf>,
+    claude: Option<PathBuf>,
+    antigravity: Option<PathBuf>,
+    open_code: Option<PathBuf>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessDescriptor {
+    pub id: Harness,
+    pub label: &'static str,
+    pub built_in: bool,
+    pub visible: bool,
+    pub destination_available: bool,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
@@ -42,36 +60,84 @@ pub struct SettingsResponse {
     pub settings: Settings,
     pub settings_file: PathBuf,
     pub error: Option<String>,
+    pub harnesses: Vec<HarnessDescriptor>,
 }
 
 pub fn defaults() -> Settings {
+    defaults_with_roots(&configuration_roots())
+}
+
+fn defaults_with_roots(roots: &ConfigurationRoots) -> Settings {
     let mut settings = Settings::default();
     for harness in Harness::ALL {
-        if let Some(path) = default_destination(harness) {
+        if let Some(path) = default_destination(harness, roots) {
             settings.destinations.insert(harness, path);
         }
     }
     settings
 }
 
-fn default_destination(harness: Harness) -> Option<PathBuf> {
+fn configuration_roots() -> ConfigurationRoots {
     let home = std::env::var_os("USERPROFILE")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))?;
-    let path = match harness {
-        Harness::Codex => std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".codex"))
-            .join("skills"),
-        Harness::Claude => home.join(".claude").join("skills"),
-        Harness::Antigravity => home.join(".gemini").join("config").join("skills"),
-        Harness::OpenCode => std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".config"))
-            .join("opencode")
-            .join("skills"),
-    };
-    Some(path)
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from));
+    resolve_configuration_roots(
+        home,
+        std::env::var_os("CODEX_HOME").map(PathBuf::from),
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+    )
+}
+
+fn resolve_configuration_roots(
+    home: Option<PathBuf>,
+    codex_home: Option<PathBuf>,
+    xdg_config_home: Option<PathBuf>,
+) -> ConfigurationRoots {
+    ConfigurationRoots {
+        codex: codex_home.or_else(|| home.as_ref().map(|path| path.join(".codex"))),
+        claude: home.as_ref().map(|path| path.join(".claude")),
+        antigravity: home
+            .as_ref()
+            .map(|path| path.join(".gemini").join("config")),
+        open_code: xdg_config_home
+            .or_else(|| home.map(|path| path.join(".config")))
+            .map(|path| path.join("opencode")),
+    }
+}
+
+fn configuration_root(harness: Harness, roots: &ConfigurationRoots) -> Option<&Path> {
+    match harness {
+        Harness::Codex => roots.codex.as_deref(),
+        Harness::Claude => roots.claude.as_deref(),
+        Harness::Antigravity => roots.antigravity.as_deref(),
+        Harness::OpenCode => roots.open_code.as_deref(),
+    }
+}
+
+fn default_destination(harness: Harness, roots: &ConfigurationRoots) -> Option<PathBuf> {
+    configuration_root(harness, roots).map(|path| path.join("skills"))
+}
+
+fn harness_descriptors(settings: &Settings, roots: &ConfigurationRoots) -> Vec<HarnessDescriptor> {
+    Harness::ALL
+        .into_iter()
+        .map(|id| {
+            let default = default_destination(id, roots);
+            let destination = settings.destinations.get(&id);
+            let destination_available = destination.is_some_and(|path| path.is_dir());
+            let configured_override = destination
+                .is_some_and(|path| default.as_ref().is_none_or(|default| path != default));
+            let configured = configuration_root(id, roots).is_some_and(Path::is_dir);
+            let visible = configured || (configured_override && destination_available);
+            HarnessDescriptor {
+                id,
+                label: id.label(),
+                built_in: true,
+                visible,
+                destination_available,
+            }
+        })
+        .collect()
 }
 
 fn settings_file(app: &AppHandle) -> Result<PathBuf, String> {
@@ -85,18 +151,22 @@ pub fn load(app: &AppHandle) -> SettingsResponse {
     let file = match settings_file(app) {
         Ok(file) => file,
         Err(error) => {
+            let settings = defaults();
             return SettingsResponse {
-                settings: defaults(),
+                harnesses: harness_descriptors(&settings, &configuration_roots()),
+                settings,
                 settings_file: PathBuf::new(),
                 error: Some(error),
             };
         }
     };
     let (settings, error) = load_file(&file);
+    let harnesses = harness_descriptors(&settings, &configuration_roots());
     SettingsResponse {
         settings,
         settings_file: file,
         error,
+        harnesses,
     }
 }
 
@@ -200,9 +270,80 @@ mod tests {
 
     #[test]
     fn defaults_resolve_all_harnesses_without_creating_directories() {
-        let settings = defaults();
+        let home = tempfile::tempdir().unwrap();
+        let roots = resolve_configuration_roots(Some(home.path().to_path_buf()), None, None);
+        let settings = defaults_with_roots(&roots);
         assert_eq!(settings.destinations.len(), 4);
         assert_eq!(settings.theme, Theme::Dark);
+        assert!(settings
+            .destinations
+            .values()
+            .all(|destination| !destination.exists()));
+        assert!(home.path().read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn built_in_visibility_uses_configuration_roots_and_directory_overrides() {
+        let root = tempfile::tempdir().unwrap();
+        let codex_config = root.path().join(".codex");
+        let override_destination = root.path().join("custom-skills");
+        fs::create_dir(&codex_config).unwrap();
+        fs::create_dir(&override_destination).unwrap();
+        let roots = resolve_configuration_roots(Some(root.path().to_path_buf()), None, None);
+        let mut settings = Settings::default();
+        settings
+            .destinations
+            .insert(Harness::Codex, codex_config.join("skills"));
+        settings
+            .destinations
+            .insert(Harness::Claude, override_destination.clone());
+
+        let descriptors = harness_descriptors(&settings, &roots);
+        assert_eq!(
+            descriptors.iter().map(|d| d.id).collect::<Vec<_>>(),
+            Harness::ALL
+        );
+        assert!(descriptors[0].visible);
+        assert!(!descriptors[0].destination_available);
+        assert!(descriptors[1].visible);
+        assert!(descriptors[1].destination_available);
+        assert!(!descriptors[2].visible);
+        assert!(!descriptors[3].visible);
+        assert_eq!(fs::read_dir(&codex_config).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&override_destination).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn override_is_visible_without_a_resolved_default_root() {
+        let root = tempfile::tempdir().unwrap();
+        let override_destination = root.path().join("skills");
+        fs::create_dir(&override_destination).unwrap();
+        let roots = resolve_configuration_roots(None, None, None);
+        let settings = Settings {
+            destinations: [(Harness::Codex, override_destination)]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let descriptors = harness_descriptors(&settings, &roots);
+        assert!(descriptors[0].visible);
+        assert!(descriptors[0].destination_available);
+    }
+
+    #[test]
+    fn configuration_roots_follow_runtime_environment_values() {
+        let home = PathBuf::from("home-root");
+        let codex_home = PathBuf::from("codex-root");
+        let xdg_home = PathBuf::from("xdg-root");
+        let roots = resolve_configuration_roots(
+            Some(home.clone()),
+            Some(codex_home.clone()),
+            Some(xdg_home.clone()),
+        );
+        assert_eq!(roots.codex, Some(codex_home));
+        assert_eq!(roots.claude, Some(home.join(".claude")));
+        assert_eq!(roots.antigravity, Some(home.join(".gemini").join("config")));
+        assert_eq!(roots.open_code, Some(xdg_home.join("opencode")));
     }
 
     #[test]

@@ -3,7 +3,8 @@
 ## Harness management planning — October 2, 2026
 
 - The user approved the [harness management design](specs/2026-10-02-harness-management-design.md): filter built-ins by existing configuration or destination override, add/rename/remove custom registrations, retain unavailable custom destinations, and open the inspected destination in Explorer.
-- The [two-phase implementation plan](plans/2026-10-02-harness-management-plan.md) is prepared. Phase 1 covers built-in visibility and Explorer opening; Phase 2 covers custom registrations and shared identity. No implementation phase, commit/push, packaging, or release action is authorized by this planning approval. Stop after each phase for user validation and explicit continuation authorization.
+- The planning artifacts were committed/pushed as `f5d6948` with explicit authorization. The user authorized Phase 1 implementation through tjm-multi-agent on October 2, 2026. Phase 1 is implemented and reviewed: filtered built-in tabs, visibility reload/fallback/empty state, and guarded Open folder. Frontend check/build, Rust fmt/clippy/build, and 35 Rust tests passed; mocked Edge interaction and visual QA passed. The coordinator independently reran frontend checking and all Rust tests. No native Explorer or picker interaction was verified for this phase.
+- On October 2, 2026, the user reported Phase 1 works, accepted it, and explicitly authorized its commit/push and Phase 2 implementation. This is user-reported native evidence without detailed logs. Phase 2 custom registrations are now authorized; stop for final user validation when complete. Phase 2 commit/push and packaging remain separately gated.
 
 ## Completed checkpoint
 
