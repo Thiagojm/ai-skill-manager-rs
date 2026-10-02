@@ -28,13 +28,13 @@ fn open_harness_folder(app: tauri::AppHandle, harness: manager::Harness) -> Resu
         return Err(error);
     }
 
+    let label = settings::harness_label(&response.settings, &harness)
+        .ok_or_else(|| "Unknown harness identity".to_string())?;
+    let path = settings::configured_destination(&response.settings, &harness)
+        .ok_or_else(|| format!("{label} destination is not configured"))?;
+    let target = folder_target(path)?;
     #[cfg(windows)]
     {
-        let label = settings::harness_label(&response.settings, &harness)
-            .ok_or_else(|| "Unknown harness identity".to_string())?;
-        let path = settings::configured_destination(&response.settings, &harness)
-            .ok_or_else(|| format!("{label} destination is not configured"))?;
-        let target = explorer_target(path)?;
         std::process::Command::new("explorer.exe")
             .arg(&target)
             .spawn()
@@ -46,13 +46,36 @@ fn open_harness_folder(app: tauri::AppHandle, harness: manager::Harness) -> Resu
                 )
             })
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
-        Err("Opening harness folders in File Explorer is only supported on Windows".to_string())
+        open_linux_folder(&target, "xdg-open")
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        Err(format!(
+            "Opening {} is unsupported on this platform",
+            target.display()
+        ))
     }
 }
 
-fn explorer_target(path: &Path) -> Result<PathBuf, String> {
+#[cfg(target_os = "linux")]
+fn open_linux_folder(target: &Path, program: impl AsRef<std::ffi::OsStr>) -> Result<(), String> {
+    let status = std::process::Command::new(program)
+        .arg(target)
+        .status()
+        .map_err(|error| format!("Could not open {} with xdg-open: {error}", target.display()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Could not open {}: xdg-open returned {status}",
+            target.display()
+        ))
+    }
+}
+
+fn folder_target(path: &Path) -> Result<PathBuf, String> {
     let target = path.canonicalize().map_err(|error| {
         format!(
             "Harness destination is unavailable: {}: {error}",
@@ -200,22 +223,49 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn explorer_target_requires_an_accessible_existing_directory() {
+    fn linux_folder_opener_passes_one_literal_argument_and_reports_failures() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("skills folder; $(literal)");
+        fs::create_dir(&folder).unwrap();
+        let target = folder_target(&folder).unwrap();
+        let opener = root.path().join("opener");
+        fs::write(
+            &opener,
+            b"#!/bin/sh\n[ \"$#\" -eq 1 ] || exit 2\nprintf '%s' \"$1\" > \"$0.argument\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&opener, fs::Permissions::from_mode(0o755)).unwrap();
+        open_linux_folder(&target, &opener).unwrap();
+        assert_eq!(
+            fs::read(root.path().join("opener.argument")).unwrap(),
+            target.as_os_str().as_encoded_bytes()
+        );
+        fs::write(&opener, b"#!/bin/sh\nexit 3\n").unwrap();
+        assert!(open_linux_folder(&target, &opener)
+            .unwrap_err()
+            .contains("returned"));
+        assert!(open_linux_folder(&target, root.path().join("missing"))
+            .unwrap_err()
+            .contains("xdg-open"));
+    }
+
+    #[test]
+    fn folder_target_requires_an_accessible_existing_directory() {
         let root = tempfile::tempdir().unwrap();
         let folder = root.path().join("skills folder");
         fs::create_dir(&folder).unwrap();
-        let target = explorer_target(&folder).unwrap();
+        let target = folder_target(&folder).unwrap();
         assert!(target.is_dir());
         assert!(target.to_string_lossy().contains("skills folder"));
 
         let missing = root.path().join("missing");
-        assert!(explorer_target(&missing)
-            .unwrap_err()
-            .contains("unavailable"));
+        assert!(folder_target(&missing).unwrap_err().contains("unavailable"));
         let file = root.path().join("file");
         fs::write(&file, "content").unwrap();
-        assert!(explorer_target(&file)
+        assert!(folder_target(&file)
             .unwrap_err()
             .contains("not a directory"));
     }

@@ -506,7 +506,7 @@ fn execute_operation_with_place(
     }
     let cleanup = stage.as_ref().and_then(|stage| {
         if preserved.is_empty() { cleanup_stage(stage, &plan.destination_resolved).err() }
-        else { Some(format!("Prepared replacement retained at {}; original folder is in the Recycle Bin. Recover it manually if needed.", preserved.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))) }
+        else { Some(format!("Prepared replacement retained at {}; original folder is in the system trash. Recover it manually if needed.", preserved.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))) }
     });
     emit(OperationEvent {
         kind: "finished".into(),
@@ -542,7 +542,7 @@ fn uninstall_one(
     manager::validate_recyclable(path).map_err(|error| (error, None))?;
     ensure_plan_current(settings_now, plan).map_err(|error| (error, None))?;
     verify_installed(installed, path)?;
-    recycle(path).map_err(|error| (format!("Could not move the installed folder to the Recycle Bin; it was left in place: {error}"), None))
+    recycle(path).map_err(|error| (format!("Could not move the installed folder to the system trash; it was left in place: {error}"), None))
 }
 
 fn update_one(
@@ -602,13 +602,13 @@ fn update_one(
     recycle(destination).map_err(|error| {
         (
             format!(
-                "Could not move the old folder to the Recycle Bin; it was left in place: {error}"
+                "Could not move the old folder to the system trash; it was left in place: {error}"
             ),
             None,
         )
     })?;
-    ensure_plan_current(settings_now, plan).map_err(|error| (format!("The old folder was recycled from {} but destination settings changed. Prepared copy retained at {}. Restore the original manually from the Recycle Bin. {error}", destination.display(), staged.display()), Some(staged.clone())))?;
-    place(&staged, destination).map_err(|error| (format!("The old folder was recycled from {}, but the replacement could not be placed. Prepared copy retained at {}. Restore the original manually from the Recycle Bin. Placement error: {error}", destination.display(), staged.display()), Some(staged)))
+    ensure_plan_current(settings_now, plan).map_err(|error| (format!("The old folder was recycled from {} but destination settings changed. Prepared copy retained at {}. Restore the original manually from the system trash. {error}", destination.display(), staged.display()), Some(staged.clone())))?;
+    place(&staged, destination).map_err(|error| (format!("The old folder was recycled from {}, but the replacement could not be placed. Prepared copy retained at {}. Restore the original manually from the system trash. Placement error: {error}", destination.display(), staged.display()), Some(staged)))
 }
 
 fn verify_installed(
@@ -977,6 +977,85 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("changed after the comparison"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn permission_changes_invalidate_scans_and_confirmations() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        let original = skill(&source, "One", b"same bytes");
+        let script = original.source.join("run.sh");
+        file(&script, b"#!/bin/sh\nexit 0\n");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let settings_now = Settings {
+            source: Some(source),
+            destinations: [("codex".to_string(), destination.clone())]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let response = manager::scan(&settings_now, "codex").unwrap();
+        record_scan(&response, begin_scan());
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(prepare_operation(
+            &settings_now,
+            "codex".into(),
+            &response.revision,
+            OperationAction::Install,
+            &["One".into()]
+        )
+        .is_err());
+        let response = manager::scan(&settings_now, "codex").unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            "codex".into(),
+            &response.revision,
+            OperationAction::Install,
+            &["One".into()],
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut events = Vec::new();
+        execute_operation(
+            &prepared.token,
+            &settings_now,
+            true,
+            |_| panic!("Install must not recycle"),
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert!(!destination.join("One").exists());
+        assert!(events.iter().any(|event| event.success == Some(false)));
+        let installed = skill(&destination, "One", b"installed");
+        let installed_file = installed.source.join("SKILL.md");
+        fs::set_permissions(&installed_file, fs::Permissions::from_mode(0o644)).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            "codex".into(),
+            &response.revision,
+            OperationAction::Uninstall,
+            &["One".into()],
+        )
+        .unwrap();
+        fs::set_permissions(&installed_file, fs::Permissions::from_mode(0o600)).unwrap();
+        let mut events = Vec::new();
+        execute_operation(
+            &prepared.token,
+            &settings_now,
+            true,
+            |_| panic!("Changed permissions must prevent recycling"),
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert!(installed_file.exists());
+        assert!(events.iter().any(|event| event.success == Some(false)));
     }
 
     #[test]
@@ -1358,7 +1437,7 @@ mod tests {
                 .message
                 .as_deref()
                 .unwrap_or_default()
-                .contains("Recycle Bin")));
+                .contains("system trash")));
     }
 
     #[test]
@@ -1423,7 +1502,7 @@ mod tests {
             .next()
             .unwrap();
         assert!(Path::new(prepared_path).is_dir(), "{failure}");
-        assert!(failure.contains("Restore the original manually from the Recycle Bin"));
+        assert!(failure.contains("Restore the original manually from the system trash"));
     }
 
     #[test]

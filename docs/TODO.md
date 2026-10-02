@@ -1,5 +1,12 @@
 # Work status
 
+## Ubuntu support — October 2, 2026
+
+- The user approved the [Ubuntu design](specs/2026-10-02-ubuntu-support-design.md) and [three-phase plan](plans/2026-10-02-ubuntu-support-plan.md) in chat and explicitly requested implementation. Phase 1 is the current scope; Phase 2 packaging and Phase 3 native acceptance require separate authorization after each validation gate.
+- Phase 1 adds Linux folder opening, OS-specific home resolution, system-trash wording, Linux file-permission comparison/staging/stale-input checks, literal Unix filenames, and Windows/Ubuntu CI. No dependencies, settings schema, release version, or release assets change.
+- Local frontend check/build, Rust fmt/clippy, all 42 Windows tests, debug build, and optimized Tauri build with `--no-bundle -- --locked` passed. CI YAML was parsed and its triggers, read-only permissions, and OS matrix verified; this is static validation only. Three Linux-only regression tests are added but unexecuted here; WSL is not installed. Actions has not run because this work is not committed/pushed; those actions require separate authorization. Native Ubuntu/picker/trash and package validation remain pending. Reviewed the complete diff and `git diff --check` passed. No lockfiles or dependency manifests changed.
+- User validation: run `npm.cmd run tauri dev` on Windows with disposable source/destination directories; confirm Open folder, remembered paths, Install/Update/Uninstall, and the revised trash/recovery confirmation. Report native results separately from automated tests. Stop for Phase 1 acceptance; do not start the manual packaging workflow yet. Commit/push needs explicit authorization before actual CI execution can establish Windows/Ubuntu evidence.
+
 ## Harness management planning — October 2, 2026
 
 - The user approved the [harness management design](specs/2026-10-02-harness-management-design.md): filter built-ins by existing configuration or destination override, add/rename/remove custom registrations, retain unavailable custom destinations, and open the inspected destination in Explorer.
@@ -36,3 +43,5 @@
 
 - The user authorized commit/push of the icon/tutorial and draft installer regeneration on October 1, 2026. Source commit `62d3f0d` was pushed; the NSIS build and draft replacement passed, with source target and uploaded SHA-256 verified. Native icon correction: the user found the old Tauri logo in the window/taskbar; the release executable also retained it. Added icon-directory rebuild tracking in build.rs. The corrected NSIS build and embedded icon extraction passed; the user authorized commit/push and draft installer replacement on October 1, 2026. Current source/hash are in the draft release notes/assets. Next: user tests installation, installed-app launch/window/taskbar icon, and uninstallation. Keep GitHub v0.1.0 in draft until validated and public publication is explicitly authorized. Remaining Windows evidence gaps are listed above.
 - Signing, installer publication, Linux validation, project-local management, remote downloads, skill editing, automatic synchronization, and in-app restore are outside current authorization or v1 scope as defined in the design.
+
+- October 2, 2026: the user accepted the Phase 1 checkpoint, explicitly authorized its commit/push, and authorized Phase 2 manual package generation. Native interaction coverage was not itemized; actual CI evidence will be recorded separately. Phase 3 and publication remain gated.

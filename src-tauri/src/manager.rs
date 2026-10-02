@@ -643,6 +643,11 @@ fn nonfollowing_fingerprint(path: &Path) -> Result<String, String> {
             }
         } else if metadata.is_file() {
             hash.update(b"file");
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                hash.update((metadata.permissions().mode() & 0o777).to_le_bytes());
+            }
             hash.update(metadata.len().to_le_bytes());
             if let Ok(modified) = metadata.modified() {
                 if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
@@ -1066,6 +1071,12 @@ fn inventory_directory(
 fn hash_file(path: &Path) -> io::Result<[u8; 32]> {
     let mut file = fs::File::open(path)?;
     let mut hash = Sha256::new();
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // All comparison, staging, and mutation fingerprints share file permission checks.
+        hash.update((file.metadata()?.permissions().mode() & 0o777).to_le_bytes());
+    }
     let mut buffer = [0u8; 64 * 1024];
     loop {
         let read = file.read(&mut buffer)?;
@@ -1167,7 +1178,11 @@ fn path_key(path: &Path) -> String {
 }
 
 fn display_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    if cfg!(windows) {
+        path.to_string_lossy().replace('\\', "/")
+    } else {
+        path.to_string_lossy().into_owned()
+    }
 }
 
 fn same_directory(left: &Path, right: &Path) -> bool {
@@ -1533,6 +1548,54 @@ mod tests {
         } else {
             assert_ne!(identity_key("Skill"), identity_key("skill"));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_permissions_links_and_literal_paths_survive_materialized_copy() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let staged = temp.path().join("staged");
+        skill(&source, "Skill", "same");
+        skill(&source, "skill", "same");
+        assert_eq!(read_source(&source).unwrap().len(), 2);
+        let root = source.join("Skill");
+        let script = root.join("run.sh");
+        file(&script, b"#!/bin/sh\nexit 0\n");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink(&script, root.join("linked.sh")).unwrap();
+        file(&root.join("literal\\name"), b"literal");
+        file(&root.join("literal/name"), b"nested");
+        fs::create_dir(&staged).unwrap();
+        copy_materialized(&root, &staged, &[]).unwrap();
+        assert_eq!(
+            content_fingerprint(&root).unwrap(),
+            content_fingerprint(&staged).unwrap()
+        );
+        for name in ["run.sh", "linked.sh"] {
+            let metadata = fs::symlink_metadata(staged.join(name)).unwrap();
+            assert!(metadata.is_file());
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o755);
+        }
+        assert_eq!(fs::read(staged.join("literal\\name")).unwrap(), b"literal");
+        assert_eq!(fs::read(staged.join("literal/name")).unwrap(), b"nested");
+        let before = fingerprint(&staged).unwrap();
+        fs::set_permissions(staged.join("run.sh"), fs::Permissions::from_mode(0o644)).unwrap();
+        assert_ne!(before, fingerprint(&staged).unwrap());
+        assert_ne!(
+            content_fingerprint(&root).unwrap(),
+            content_fingerprint(&staged).unwrap()
+        );
+        let (_, differences) =
+            compare_trees(&inventory(&root).unwrap(), &inventory(&staged).unwrap());
+        assert!(differences
+            .iter()
+            .any(|difference| difference.path == "run.sh" && difference.kind == "changed"));
+        assert_eq!(
+            fs::metadata(&script).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
     }
 
     #[test]

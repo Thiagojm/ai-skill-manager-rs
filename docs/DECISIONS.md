@@ -1,5 +1,11 @@
 # Durable decisions
 
+## Ubuntu support and CI — approved October 2, 2026
+
+The [Ubuntu extension design](specs/2026-10-02-ubuntu-support-design.md) targets Ubuntu 22.04+ x64 alongside Windows, with actual desktop validation required before support claims. Keep the existing operation/settings architecture and dependencies. Use xdg-open with one validated absolute argument on Linux and retain Explorer on Windows. Linux ordinary regular-file permissions (`0o777`) participate in comparison, stage verification, and stale-input protection; copies use stdlib permission preservation. Directory modes follow creation/umask; ownership/ACLs/xattrs are excluded. System-trash wording covers both platforms without permanent-delete fallback.
+
+Automatic CI checks Windows 2022 and Ubuntu 22.04. Separately gated manual packaging will generate NSIS/deb plus checksums as Actions artifacts, with no automatic tags/releases or publication. Debian, ARM, and AppImage are deferred. Phase 1 is authorized; later phases, commit/push, and release uploads remain separately gated.
+
 ## Harness visibility and registry extension — accepted October 2, 2026
 
 The [harness management design](specs/2026-10-02-harness-management-design.md) extends v1: built-ins appear when their default configuration directory or an overridden destination exists, without executable probing or directory creation. A missing skills folder alone does not hide a configured harness. Open folder remains a narrow backend command resolving the saved destination from harness identity, with no general shell permission. Phase 1 implements these decisions.

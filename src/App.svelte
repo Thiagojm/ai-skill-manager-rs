@@ -586,11 +586,11 @@
 
   <dialog bind:this={installDialog} class="operation-dialog" aria-labelledby="install-title" oncancel={(event) => { if (operationRunning) event.preventDefault() }} onclose={() => { if (!operationRunning) preparedInstall = null }}>
     {#if preparedInstall}
-      <div class="dialog-heading"><span class="eyebrow">Confirm {preparedInstall.action}</span><h2 id="install-title">{preparedInstall.action === 'install' ? 'Install complete skill folders?' : preparedInstall.action === 'update' ? 'Replace complete skill folders?' : 'Move skill folders to the Recycle Bin?'}</h2>
-        <p>{preparedInstall.action === 'install' ? 'Selected folders will be copied to this destination:' : preparedInstall.action === 'update' ? 'The existing complete folders will move to the Recycle Bin before replacements are placed:' : 'Selected complete folders will move to the Windows Recycle Bin from:'}</p><code>{preparedInstall.destinationPath}</code>
+      <div class="dialog-heading"><span class="eyebrow">Confirm {preparedInstall.action}</span><h2 id="install-title">{preparedInstall.action === 'install' ? 'Install complete skill folders?' : preparedInstall.action === 'update' ? 'Replace complete skill folders?' : 'Move skill folders to the system trash?'}</h2>
+        <p>{preparedInstall.action === 'install' ? 'Selected folders will be copied to this destination:' : preparedInstall.action === 'update' ? 'The existing complete folders will move to the system trash before replacements are placed:' : 'Selected complete folders will move to the system trash from:'}</p><code>{preparedInstall.destinationPath}</code>
       </div>
       {#if preparedInstall.action !== 'install'}
-        <div class="dialog-warning"><strong>Recovery and refresh</strong><p>Windows controls Recycle Bin retention. Restore items manually from Recycle Bin; external harnesses may need a refresh or restart.</p></div>
+        <div class="dialog-warning"><strong>Recovery and refresh</strong><p>The operating system controls trash retention. Restore items manually from the system trash; external harnesses may need a refresh or restart.</p></div>
       {/if}
       {#if preparedInstall.warnings.length}
         <div class="dialog-warning"><strong>Review these warnings</strong>

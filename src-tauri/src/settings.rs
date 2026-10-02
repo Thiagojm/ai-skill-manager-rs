@@ -80,9 +80,8 @@ fn defaults_with_roots(roots: &ConfigurationRoots) -> Settings {
 }
 
 fn configuration_roots() -> ConfigurationRoots {
-    let home = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(PathBuf::from));
+    let home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
     resolve_configuration_roots(
         home,
         std::env::var_os("CODEX_HOME").map(PathBuf::from),
