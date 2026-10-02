@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import appIcon from '../src-tauri/icons/128x128.png'
   import { open } from '@tauri-apps/plugin-dialog'
   import {
     loadSettings,
@@ -254,7 +255,7 @@
 <div class="app-shell">
   <header class="topbar">
     <a class="brand" href="#main" aria-label="AI Skill Manager home">
-      <span class="brand-mark" aria-hidden="true">S</span>
+      <img class="brand-mark" src={appIcon} alt="" width="34" height="34" />
       <span><strong>Skill Manager</strong><small>Local library comparison</small></span>
     </a>
     <div class="topbar-actions">

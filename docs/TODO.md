@@ -28,5 +28,5 @@
 
 ## Deferred scope
 
-- Next: user tests installer installation, installed-app launch, and uninstallation. Keep GitHub v0.1.0 in draft until validated and public publication is explicitly authorized. Remaining Windows evidence gaps are listed above.
+- The user authorized commit/push of the icon/tutorial and draft installer regeneration on October 1, 2026. Next: user tests the refreshed installer installation, installed-app launch, and uninstallation. Keep GitHub v0.1.0 in draft until validated and public publication is explicitly authorized. Remaining Windows evidence gaps are listed above.
 - Signing, installer publication, Linux validation, project-local management, remote downloads, skill editing, automatic synchronization, and in-app restore are outside current authorization or v1 scope as defined in the design.
