@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 
-export type Harness = 'codex' | 'claude' | 'antigravity' | 'open_code'
+export type Harness = string
 export type Theme = 'dark' | 'light'
 export type OperationAction = 'install' | 'update' | 'uninstall'
 
@@ -14,7 +14,8 @@ export interface HarnessDescriptor {
 
 export interface Settings {
   source: string | null
-  destinations: Partial<Record<Harness, string>>
+  destinations: Record<Harness, string>
+  custom_harnesses: Record<Harness, string>
   theme: Theme
 }
 

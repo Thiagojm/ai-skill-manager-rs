@@ -30,8 +30,10 @@ fn open_harness_folder(app: tauri::AppHandle, harness: manager::Harness) -> Resu
 
     #[cfg(windows)]
     {
-        let path = settings::configured_destination(&response.settings, harness)
-            .ok_or_else(|| format!("{} destination is not configured", harness.label()))?;
+        let label = settings::harness_label(&response.settings, &harness)
+            .ok_or_else(|| "Unknown harness identity".to_string())?;
+        let path = settings::configured_destination(&response.settings, &harness)
+            .ok_or_else(|| format!("{label} destination is not configured"))?;
         let target = explorer_target(path)?;
         std::process::Command::new("explorer.exe")
             .arg(&target)
@@ -118,7 +120,7 @@ async fn scan_skills(
         let settings = response.settings;
         let response = manager::scan_cached(
             &settings,
-            harness,
+            &harness,
             &mut cache.lock().unwrap_or_else(|e| e.into_inner()),
             reuse_source,
         )?;

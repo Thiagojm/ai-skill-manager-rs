@@ -12,27 +12,8 @@ use crate::settings::{self, Settings};
 
 static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Harness {
-    Codex,
-    Claude,
-    Antigravity,
-    OpenCode,
-}
-
-impl Harness {
-    pub const ALL: [Self; 4] = [Self::Codex, Self::Claude, Self::Antigravity, Self::OpenCode];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Codex => "Codex",
-            Self::Claude => "Claude Code",
-            Self::Antigravity => "Antigravity IDE",
-            Self::OpenCode => "OpenCode",
-        }
-    }
-}
+pub type Harness = String;
+pub const BUILT_INS: [&str; 4] = ["codex", "claude", "antigravity", "open_code"];
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,13 +142,13 @@ fn inventory_batch(paths: Vec<PathBuf>) -> BTreeMap<PathBuf, Result<TreeScan, St
 }
 
 #[cfg(test)]
-pub fn scan(settings: &Settings, harness: Harness) -> Result<ScanResponse, String> {
+pub fn scan(settings: &Settings, harness: &str) -> Result<ScanResponse, String> {
     scan_cached(settings, harness, &mut SourceCache::default(), false)
 }
 
 pub(crate) fn scan_cached(
     settings: &Settings,
-    harness: Harness,
+    harness: &str,
     cache: &mut SourceCache,
     reuse_source: bool,
 ) -> Result<ScanResponse, String> {
@@ -184,7 +165,12 @@ pub(crate) fn scan_cached(
     }
     let destination = settings::configured_destination(settings, harness)
         .map(Path::to_path_buf)
-        .ok_or_else(|| format!("No destination is configured for {}", harness.label()))?;
+        .ok_or_else(|| {
+            format!(
+                "No destination is configured for {}",
+                settings::harness_label(settings, harness).unwrap_or(harness)
+            )
+        })?;
     let resolved_source_path = source.as_deref().map(resolve_path).transpose()?;
     let resolved_destination_path = resolve_path(&destination)?;
     let mut warnings = Vec::new();
@@ -382,14 +368,15 @@ pub(crate) fn scan_cached(
     if !destination.exists() {
         warnings.push("The configured destination folder does not exist yet.".into());
     }
-    let shared: Vec<_> = Harness::ALL
-        .into_iter()
-        .filter(|other| *other != harness)
+    let shared: Vec<_> = settings
+        .destinations
+        .keys()
+        .filter(|other| other.as_str() != harness)
         .filter(|other| {
-            settings::configured_destination(settings, *other)
+            settings::configured_destination(settings, other)
                 .is_some_and(|path| same_directory(&destination, path))
         })
-        .map(Harness::label)
+        .filter_map(|other| settings::harness_label(settings, other))
         .collect();
     if !shared.is_empty() {
         warnings.push(format!(
@@ -397,7 +384,7 @@ pub(crate) fn scan_cached(
             shared.join(", ")
         ));
     }
-    if harness == Harness::OpenCode {
+    if harness == "open_code" {
         warnings.push("OpenCode also reads Claude Code and shared agent skill directories; this tab manages only its configured destination.".into());
     }
     let revision = format!(
@@ -406,13 +393,13 @@ pub(crate) fn scan_cached(
     );
     eprintln!(
         "{} scan: {:?} (reuse source: {})",
-        harness.label(),
+        settings::harness_label(settings, harness).unwrap_or(harness),
         started.elapsed(),
         reuse_source
     );
     Ok(ScanResponse {
         revision,
-        harness,
+        harness: harness.to_string(),
         source_path: source,
         destination_path: destination,
         skills,
@@ -1301,15 +1288,15 @@ mod tests {
         let mut settings = Settings {
             source: Some(source.clone()),
             destinations: [
-                (Harness::Codex, destination.clone()),
-                (Harness::Claude, destination.clone()),
+                ("codex".into(), destination.clone()),
+                ("claude".into(), destination.clone()),
             ]
             .into_iter()
             .collect(),
             ..Settings::default()
         };
         let mut cache = SourceCache::default();
-        let first = scan_cached(&settings, Harness::Codex, &mut cache, false).unwrap();
+        let first = scan_cached(&settings, "codex", &mut cache, false).unwrap();
         for row in &first.skills {
             assert_eq!(
                 row.source_fingerprint,
@@ -1318,13 +1305,13 @@ mod tests {
         }
         skill(&source, "A", "after");
         skill(&destination, "A", "after");
-        let cached = scan_cached(&settings, Harness::Claude, &mut cache, true).unwrap();
+        let cached = scan_cached(&settings, "claude", &mut cache, true).unwrap();
         assert_eq!(
             cached.skills[0].source_fingerprint,
             first.skills[0].source_fingerprint
         );
         assert_eq!(cached.skills[0].status, "different");
-        let fresh = scan_cached(&settings, Harness::Claude, &mut cache, false).unwrap();
+        let fresh = scan_cached(&settings, "claude", &mut cache, false).unwrap();
         assert_ne!(
             fresh.skills[0].source_fingerprint,
             first.skills[0].source_fingerprint
@@ -1333,7 +1320,7 @@ mod tests {
         let other = temp.path().join("other");
         skill(&other, "Other", "new source");
         settings.source = Some(other);
-        let changed = scan_cached(&settings, Harness::Codex, &mut cache, true).unwrap();
+        let changed = scan_cached(&settings, "codex", &mut cache, true).unwrap();
         assert!(!changed.skills.iter().any(|row| row.folder_name == "B"));
         assert!(changed.skills.iter().any(|row| row.folder_name == "Other"));
         let paths = vec![source.join("A"), source.join("B"), source.join("missing")];
@@ -1367,12 +1354,12 @@ mod tests {
         );
         let settings = Settings {
             source: Some(source),
-            destinations: [(Harness::Codex, destination.clone())]
+            destinations: [("codex".into(), destination.clone())]
                 .into_iter()
                 .collect(),
             ..Settings::default()
         };
-        let response = scan(&settings, Harness::Codex).unwrap();
+        let response = scan(&settings, "codex").unwrap();
         let statuses: BTreeMap<_, _> = response
             .skills
             .iter()
@@ -1415,13 +1402,24 @@ mod tests {
         let mut settings = Settings::default();
         settings
             .destinations
-            .insert(Harness::OpenCode, destination.clone());
-        settings.destinations.insert(Harness::Claude, destination);
-        let response = scan(&settings, Harness::OpenCode).unwrap();
+            .insert("open_code".into(), destination.clone());
+        settings
+            .destinations
+            .insert("claude".into(), destination.clone());
+        let custom_id = "custom-550e8400-e29b-41d4-a716-446655440000";
+        settings.destinations.insert(custom_id.into(), destination);
+        settings
+            .custom_harnesses
+            .insert(custom_id.into(), "Research".into());
+        let response = scan(&settings, "open_code").unwrap();
         assert!(response
             .warnings
             .iter()
             .any(|warning| warning.contains("Claude Code")));
+        assert!(response
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Research")));
         assert_eq!(response.skills[0].status, "installed_only");
         assert!(response.skills[0]
             .link_warnings

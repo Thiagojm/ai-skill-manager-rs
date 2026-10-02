@@ -42,6 +42,8 @@ AI Skill Manager automatically resolves standard skill installation paths for po
 > [!NOTE]
 > Custom destination paths and chosen themes are automatically saved and restored on subsequent launches.
 
+Built-in tabs appear when their configuration folder or a saved destination exists. To manage another tool, select **Add harness**, enter a name, choose its existing skills folder, then click **Add harness**. The registration is saved locally and remains visible if that folder later becomes unavailable. Select a custom tab and use **Choose destination…** to repair its path or **Manage harness** to rename or remove it. Removing a registration only clears its saved name and path; it never deletes the skills folder or its contents.
+
 ---
 
 ## 🔄 Understanding Skill Statuses

@@ -4,7 +4,7 @@
 
 The [harness management design](specs/2026-10-02-harness-management-design.md) extends v1: built-ins appear when their default configuration directory or an overridden destination exists, without executable probing or directory creation. A missing skills folder alone does not hide a configured harness. Open folder remains a narrow backend command resolving the saved destination from harness identity, with no general shell permission. Phase 1 implements these decisions.
 
-The approved Phase 2 design adds persistent custom identities independent of names/paths, rename and registration removal without deleting folders, and visible unavailable custom destinations that can be corrected. Those features are not implemented or authorized by Phase 1 completion. Existing whole-folder and operation safeguards remain binding.
+The approved Phase 2 design adds persistent custom identities independent of names/paths, rename and registration removal without deleting folders, and visible unavailable custom destinations that can be corrected. The user accepted Phase 1 and explicitly authorized Phase 2 on October 2, 2026; these features are now implemented and accepted after the user reported Phase 2 works on October 2, 2026 and authorized its commit/push. Automated, mocked browser, and user-reported native evidence are recorded separately in project context. Existing whole-folder and operation safeguards remain binding.
 
 The following contracts were approved on October 1, 2026 in the [design specification](specs/2026-10-01-ai-skill-manager-design.md). The specification remains authoritative for detailed safeguards.
 

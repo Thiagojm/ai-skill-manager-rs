@@ -180,7 +180,7 @@ pub fn record_scan(scan: &ScanResponse, generation: u64) {
     scans().lock().unwrap_or_else(|e| e.into_inner()).insert(
         scan.revision.clone(),
         ScanBaseline {
-            harness: scan.harness,
+            harness: scan.harness.clone(),
             source_parent: scan.resolved_source_path.clone(),
             destination_resolved: scan.resolved_destination_path.clone(),
             warnings: scan.warnings.clone(),
@@ -208,7 +208,7 @@ pub fn prepare_operation(
     if baseline.harness != harness {
         return Err("This comparison belongs to another harness. Refresh and try again.".into());
     }
-    let destination = settings::configured_destination(settings_now, harness)
+    let destination = settings::configured_destination(settings_now, &harness)
         .map(Path::to_path_buf)
         .ok_or_else(|| "No destination is configured for this harness.".to_string())?;
     let destination_resolved = manager::resolved_path(&destination)?;
@@ -692,7 +692,7 @@ fn item_path(destination: &Path, installed: &InstalledBaseline) -> PathBuf {
 }
 
 fn ensure_plan_current(settings_now: &Settings, plan: &ManagePlan) -> Result<(), String> {
-    let destination = settings::configured_destination(settings_now, plan.harness)
+    let destination = settings::configured_destination(settings_now, &plan.harness)
         .ok_or_else(|| "No destination is configured for this harness.".to_string())?;
     if !resolves_to(Some(destination), &plan.destination_resolved) {
         return Err(
@@ -957,21 +957,20 @@ mod tests {
         let baseline_skill = skill(&source, "Changed", b"before");
         let settings_now = Settings {
             source: Some(source.clone()),
-            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            destinations: [("codex".to_string(), destination)].into_iter().collect(),
             ..Settings::default()
         };
         let mut cache = manager::SourceCache::default();
-        manager::scan_cached(&settings_now, Harness::Codex, &mut cache, false).unwrap();
+        manager::scan_cached(&settings_now, "codex", &mut cache, false).unwrap();
         file(&baseline_skill.source.join(".hidden/nested.txt"), b"after");
-        let response =
-            manager::scan_cached(&settings_now, Harness::Codex, &mut cache, true).unwrap();
+        let response = manager::scan_cached(&settings_now, "codex", &mut cache, true).unwrap();
         let revision = response.revision.clone();
         let generation = begin_scan();
         record_scan(&response, generation);
 
         let error = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &revision,
             OperationAction::Install,
             &["Changed".into()],
@@ -993,10 +992,10 @@ mod tests {
         source_alias(&first, &alias);
         let settings_now = Settings {
             source: Some(alias.clone()),
-            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            destinations: [("codex".to_string(), destination)].into_iter().collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         let revision = response.revision.clone();
         record_scan(&response, begin_scan());
         remove_source_alias(&alias);
@@ -1004,7 +1003,7 @@ mod tests {
 
         let error = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &revision,
             OperationAction::Install,
             &["Same".into()],
@@ -1053,12 +1052,12 @@ mod tests {
         source_alias(&external, &good.source.join("resources"));
         let settings_now = Settings {
             source: Some(source),
-            destinations: [(Harness::Codex, destination.clone())]
+            destinations: [("codex".to_string(), destination.clone())]
                 .into_iter()
                 .collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         record_scan(&response, begin_scan());
         let selected = vec![
             "changed".into(),
@@ -1069,7 +1068,7 @@ mod tests {
         ];
         let cancelled = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &response.revision,
             OperationAction::Install,
             &selected,
@@ -1084,7 +1083,7 @@ mod tests {
         assert!(!destination.exists());
         let confirmed = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &response.revision,
             OperationAction::Install,
             &selected,
@@ -1149,16 +1148,16 @@ mod tests {
         let _skill = skill(&source, "One", b"content");
         let settings_now = Settings {
             source: Some(source),
-            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            destinations: [("codex".to_string(), destination)].into_iter().collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         let revision = response.revision.clone();
         record_scan(&response, begin_scan());
         begin_scan();
         assert!(prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &revision,
             OperationAction::Install,
             &["One".into()]
@@ -1179,12 +1178,12 @@ mod tests {
         let installed = skill(&destination, "Broken", b"installed");
         let settings_now = Settings {
             source: Some(source),
-            destinations: [(Harness::Codex, destination.clone())]
+            destinations: [("codex".to_string(), destination.clone())]
                 .into_iter()
                 .collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         let row = &response.skills[0];
         assert_eq!(row.status, "invalid_source");
         assert!(row
@@ -1199,7 +1198,7 @@ mod tests {
         };
         let prepared = prepare_operation(
             &no_source,
-            Harness::Codex,
+            "codex".to_string(),
             &response.revision,
             OperationAction::Uninstall,
             &["Broken".into()],
@@ -1230,15 +1229,15 @@ mod tests {
         let destination = temp.path().join("destination");
         let installed = skill(&destination, "One", b"before");
         let settings_now = Settings {
-            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            destinations: [("codex".to_string(), destination)].into_iter().collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         record_scan(&response, begin_scan());
         file(&installed.source.join(".hidden/nested.txt"), b"after");
         let error = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &response.revision,
             OperationAction::Uninstall,
             &["One".into()],
@@ -1262,14 +1261,14 @@ mod tests {
             fs::create_dir_all(&source).unwrap();
             let settings_now = Settings {
                 source: Some(source),
-                destinations: [(Harness::Codex, destination)].into_iter().collect(),
+                destinations: [("codex".to_string(), destination)].into_iter().collect(),
                 ..Settings::default()
             };
-            let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+            let response = manager::scan(&settings_now, "codex").unwrap();
             record_scan(&response, begin_scan());
             let error = prepare_operation(
                 &settings_now,
-                Harness::Codex,
+                "codex".to_string(),
                 &response.revision,
                 OperationAction::Uninstall,
                 &["One".into()],
@@ -1286,14 +1285,14 @@ mod tests {
         let destination = temp.path().join("destination");
         let installed = skill(&destination, "One", b"before");
         let settings_now = Settings {
-            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            destinations: [("codex".to_string(), destination)].into_iter().collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         record_scan(&response, begin_scan());
         let prepared = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &response.revision,
             OperationAction::Uninstall,
             &["One".into()],
@@ -1328,14 +1327,14 @@ mod tests {
         let destination = temp.path().join("destination");
         let installed = skill(&destination, "One", b"preserve");
         let settings_now = Settings {
-            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            destinations: [("codex".to_string(), destination)].into_iter().collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         record_scan(&response, begin_scan());
         let prepared = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &response.revision,
             OperationAction::Uninstall,
             &["One".into()],
@@ -1372,16 +1371,16 @@ mod tests {
         skill(&source, "One", b"new");
         let settings_now = Settings {
             source: Some(source),
-            destinations: [(Harness::Codex, destination.clone())]
+            destinations: [("codex".to_string(), destination.clone())]
                 .into_iter()
                 .collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         record_scan(&response, begin_scan());
         let prepared = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &response.revision,
             OperationAction::Update,
             &["One".into()],
@@ -1441,17 +1440,17 @@ mod tests {
         fs::create_dir(new_one.source.join("empty")).unwrap();
         let settings_now = Settings {
             source: Some(source),
-            destinations: [(Harness::Codex, destination.clone())]
+            destinations: [("codex".to_string(), destination.clone())]
                 .into_iter()
                 .collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         record_scan(&response, begin_scan());
         let selected = vec!["One".into(), "Two".into()];
         let prepared = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &response.revision,
             OperationAction::Update,
             &selected,
@@ -1502,6 +1501,133 @@ mod tests {
     }
 
     #[test]
+    fn custom_harness_supports_install_and_removed_registry_invalidates_confirmation() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("custom-skills");
+        let first = skill(&source, "First", b"first");
+        fs::create_dir(&destination).unwrap();
+        let id = "custom-550e8400-e29b-41d4-a716-446655440000";
+        let settings_now = Settings {
+            source: Some(source.clone()),
+            destinations: [(id.to_string(), destination.clone())]
+                .into_iter()
+                .collect(),
+            custom_harnesses: [(id.to_string(), "Research".to_string())]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let response = manager::scan(&settings_now, id).unwrap();
+        assert_eq!(response.skills[0].status, "missing");
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            id.to_string(),
+            &response.revision,
+            OperationAction::Install,
+            &["First".into()],
+        )
+        .unwrap();
+        execute_operation(&prepared.token, &settings_now, true, |_| Ok(()), |_| {}).unwrap();
+        assert_eq!(
+            fs::read(destination.join("First/.hidden/nested.txt")).unwrap(),
+            b"first"
+        );
+
+        file(&first.source.join(".hidden/nested.txt"), b"updated");
+        let response = manager::scan(&settings_now, id).unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            id.to_string(),
+            &response.revision,
+            OperationAction::Update,
+            &["First".into()],
+        )
+        .unwrap();
+        let recycle_root = temp.path().join("recycled");
+        fs::create_dir(&recycle_root).unwrap();
+        execute_operation(
+            &prepared.token,
+            &settings_now,
+            true,
+            |path| {
+                fs::rename(path, recycle_root.join(path.file_name().unwrap()))
+                    .map_err(|error| error.to_string())
+            },
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(destination.join("First/.hidden/nested.txt")).unwrap(),
+            b"updated"
+        );
+
+        let response = manager::scan(&settings_now, id).unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            id.to_string(),
+            &response.revision,
+            OperationAction::Uninstall,
+            &["First".into()],
+        )
+        .unwrap();
+        execute_operation(
+            &prepared.token,
+            &settings_now,
+            true,
+            |path| {
+                fs::rename(path, recycle_root.join("uninstalled-First"))
+                    .map_err(|error| error.to_string())
+            },
+            |_| {},
+        )
+        .unwrap();
+        assert!(!destination.join("First").exists());
+        assert!(recycle_root.join("uninstalled-First").is_dir());
+
+        let _second = skill(&source, "Second", b"second");
+        let response = manager::scan(&settings_now, id).unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &settings_now,
+            id.to_string(),
+            &response.revision,
+            OperationAction::Install,
+            &["Second".into()],
+        )
+        .unwrap();
+        let other_destination = temp.path().join("changed-destination");
+        fs::create_dir(&other_destination).unwrap();
+        let changed_path = Settings {
+            destinations: [(id.to_string(), other_destination)].into_iter().collect(),
+            ..settings_now.clone()
+        };
+        assert!(prepare_operation(
+            &changed_path,
+            id.to_string(),
+            &response.revision,
+            OperationAction::Install,
+            &["Second".into()]
+        )
+        .unwrap_err()
+        .contains("Destination settings changed"));
+        let mut removed = settings_now.clone();
+        removed.custom_harnesses.remove(id);
+        removed.destinations.remove(id);
+        assert!(
+            execute_operation(&prepared.token, &removed, true, |_| Ok(()), |_| {})
+                .unwrap_err()
+                .contains("No destination")
+        );
+        assert!(!destination.join("Second").exists());
+        assert!(first.source.exists());
+    }
+
+    #[test]
     fn recycling_junction_entry_does_not_follow_external_target() {
         let _guard = test_lock();
         let temp = tempfile::tempdir().unwrap();
@@ -1512,14 +1638,14 @@ mod tests {
         file(&external.join("keep.txt"), b"external");
         source_alias(&external, &installed.source.join("resources"));
         let settings_now = Settings {
-            destinations: [(Harness::Codex, destination)].into_iter().collect(),
+            destinations: [("codex".to_string(), destination)].into_iter().collect(),
             ..Settings::default()
         };
-        let response = manager::scan(&settings_now, Harness::Codex).unwrap();
+        let response = manager::scan(&settings_now, "codex").unwrap();
         record_scan(&response, begin_scan());
         let prepared = prepare_operation(
             &settings_now,
-            Harness::Codex,
+            "codex".to_string(),
             &response.revision,
             OperationAction::Uninstall,
             &["One".into()],

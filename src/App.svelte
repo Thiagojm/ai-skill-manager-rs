@@ -20,7 +20,7 @@
   } from './api'
 
   let harnesses: HarnessDescriptor[] = []
-  let settings: Settings = { source: null, destinations: {}, theme: 'dark' }
+  let settings: Settings = { source: null, destinations: {}, custom_harnesses: {}, theme: 'dark' }
   let settingsFile = ''
   let settingsError = ''
   let loadError = ''
@@ -38,11 +38,15 @@
   let preparedInstall: PrepareResponse | null = null
   let acknowledgeLinks = false
   let installDialog: HTMLDialogElement
+  let addDialog: HTMLDialogElement
+  let manageDialog: HTMLDialogElement
+  let addName = ''
+  let addDestination = ''
+  let renameValue = ''
+  let confirmRemoving = false
   let scanSequence = 0
   let choosing = false
-  let selections: Record<Harness, string[]> = {
-    codex: [], claude: [], antigravity: [], open_code: [],
-  }
+  let selections: Record<Harness, string[]> = {}
 
   $: filteredSkills = (scan?.skills ?? []).filter((skill) => {
     const query = search.trim().toLocaleLowerCase()
@@ -51,7 +55,8 @@
     return matchesSearch && (statusFilter === 'all' || skill.status === statusFilter)
   })
   $: focusedSkill = scan?.skills.find((skill) => skill.folderName === focusedFolder) ?? null
-  $: activeSelections = activeHarness ? selections[activeHarness] : []
+  $: activeSelections = activeHarness ? selections[activeHarness] ?? [] : []
+  $: activeDescriptor = harnesses.find((item) => item.id === activeHarness)
   $: selectedCount = activeSelections.length
   $: installSelectedCount = activeSelections.filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('install'))).length
   $: updateSelectedCount = activeSelections.filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('update'))).length
@@ -79,13 +84,13 @@
       if (!harness) {
         scan = null
         focusedFolder = ''
-        selections = { codex: [], claude: [], antigravity: [], open_code: [] }
+        selections = {}
         return
       }
       const response = await scanSkills(harness, previousHarness === harness && reuseSource)
       if (sequence !== scanSequence) return
       scan = response
-      selections[harness] = selections[harness].filter((name) => response.skills.some((skill) => skill.folderName === name))
+      selections[harness] = selectionsFor(harness).filter((name) => response.skills.some((skill) => skill.folderName === name))
       if (!response.skills.some((skill) => skill.folderName === focusedFolder)) {
         focusedFolder = response.skills[0]?.folderName ?? ''
       }
@@ -99,7 +104,7 @@
     }
   }
 
-  function applySettingsResponse(response: Awaited<ReturnType<typeof loadSettings>>) {
+  function applySettingsResponse(response: Awaited<ReturnType<typeof loadSettings>>, preferred: Harness | null = activeHarness) {
     settings = response.settings
     settingsFile = response.settingsFile
     settingsError = response.error ?? ''
@@ -108,19 +113,21 @@
       if (!descriptor.visible) selections[descriptor.id] = []
     }
     const previous = activeHarness
-    activeHarness = harnesses.some((harness) => harness.id === previous)
-      ? previous
-      : harnesses[0]?.id ?? null
+    activeHarness = preferred && harnesses.some((harness) => harness.id === preferred)
+      ? preferred
+      : harnesses.some((harness) => harness.id === previous) ? previous : harnesses[0]?.id ?? null
     if (!activeHarness) {
       scan = null
       focusedFolder = ''
-      selections = { codex: [], claude: [], antigravity: [], open_code: [] }
+      selections = {}
     } else if (previous !== activeHarness) {
       scan = null
       focusedFolder = ''
-      if (previous) selections[previous] = []
+      if (previous && !harnesses.some((harness) => harness.id === previous)) selections[previous] = []
     }
   }
+
+  function selectionsFor(harness: Harness) { return selections[harness] ?? [] }
 
   async function chooseSource() {
     if (controlsDisabled) return
@@ -169,7 +176,7 @@
       const previousHarness = activeHarness
       applySettingsResponse(await loadSettings())
       settingsError = ''
-      if (changed === 'source') selections = { codex: [], claude: [], antigravity: [], open_code: [] }
+      if (changed === 'source') selections = {}
       else if (changed === 'destination' && previousHarness) selections[previousHarness] = []
       focusedFolder = ''
       await refresh()
@@ -178,6 +185,78 @@
     } finally {
       saving = false
     }
+  }
+
+  function openAddDialog() {
+    if (controlsDisabled) return
+    loadError = ''
+    addName = ''
+    addDestination = ''
+    addDialog.showModal()
+  }
+
+  async function chooseCustomFolder() {
+    if (controlsDisabled) return
+    choosing = true
+    try {
+      const selected = await open({ directory: true, multiple: false, title: 'Choose custom harness skills folder' })
+      if (typeof selected === 'string') addDestination = selected
+    } catch (error) { loadError = String(error) }
+    finally { choosing = false }
+  }
+
+  async function addHarness() {
+    const name = addName.trim()
+    if (!name || !addDestination || controlsDisabled) return
+    const id = `custom-${crypto.randomUUID()}`
+    await saveRegistry({
+      ...settings,
+      destinations: { ...settings.destinations, [id]: addDestination },
+      custom_harnesses: { ...settings.custom_harnesses, [id]: name },
+    }, id, addDialog)
+  }
+
+  function openManageDialog() {
+    if (!activeDescriptor || activeDescriptor.builtIn || controlsDisabled) return
+    loadError = ''
+    renameValue = activeDescriptor.label
+    confirmRemoving = false
+    manageDialog.showModal()
+  }
+
+  async function renameHarness() {
+    if (!activeHarness || !renameValue.trim() || controlsDisabled) return
+    await saveRegistry({ ...settings, custom_harnesses: { ...settings.custom_harnesses, [activeHarness]: renameValue.trim() } }, activeHarness, manageDialog)
+  }
+
+  async function removeHarness() {
+    if (!activeHarness || !confirmRemoving || controlsDisabled) return
+    const removed = activeHarness
+    const destinations = { ...settings.destinations }
+    const custom_harnesses = { ...settings.custom_harnesses }
+    delete destinations[removed]
+    delete custom_harnesses[removed]
+    await saveRegistry({ ...settings, destinations, custom_harnesses }, null, manageDialog, removed)
+  }
+
+  async function saveRegistry(next: Settings, preferred: Harness | null, dialog: HTMLDialogElement, removed: Harness | null = null) {
+    if (saving || operationPreparing || operationRunning) return
+    saving = true
+    loadError = ''
+    try {
+      await saveSettings(next)
+      const response = await loadSettings()
+      if (response.error) throw new Error(response.error)
+      applySettingsResponse(response, preferred)
+      if (removed) selections[removed] = []
+      dialog.close()
+      confirmRemoving = false
+      focusedFolder = ''
+      search = ''
+      statusFilter = 'all'
+      await refresh()
+    } catch (error) { loadError = String(error) }
+    finally { saving = false }
   }
 
   async function switchHarness(harness: Harness) {
@@ -192,7 +271,7 @@
 
   function toggleSelection(skill: SkillRow) {
     if (!activeHarness) return
-    const selected = new Set(selections[activeHarness])
+    const selected = new Set(selectionsFor(activeHarness))
     if (selected.has(skill.folderName)) selected.delete(skill.folderName)
     else selected.add(skill.folderName)
     selections[activeHarness] = [...selected]
@@ -229,7 +308,7 @@
     operationPreparing = true
     operationError = ''
     try {
-      preparedInstall = await prepareOperation(action, activeHarness, scan.revision, selections[activeHarness])
+      preparedInstall = await prepareOperation(action, activeHarness, scan.revision, selectionsFor(activeHarness))
       acknowledgeLinks = false
       operationEvents = []
       installDialog.showModal()
@@ -337,10 +416,11 @@
         <div class="no-harness-state">
           <span class="empty-icon" aria-hidden="true">▧</span>
           <h2>No configured harnesses found</h2>
-          <p>No built-in harness configuration was detected. Configure a supported harness, then refresh.</p>
-          <button class="button button-secondary" type="button" onclick={() => refresh(false, true)} disabled={controlsDisabled}>Refresh</button>
+          <p>No built-in harness configuration was detected. Add a custom skills folder or refresh.</p>
+          <div class="destination-actions"><button class="button button-primary" type="button" onclick={openAddDialog} disabled={controlsDisabled}>＋ Add harness</button><button class="button button-secondary" type="button" onclick={() => refresh(false, true)} disabled={controlsDisabled}>Refresh</button></div>
         </div>
       {:else}
+      <div class="harness-row">
       <div class="harness-tabs" aria-label="Harness destinations" role="tablist" aria-orientation="horizontal" tabindex="0">
         {#each harnesses as harness (harness.id)}
           <button
@@ -370,15 +450,21 @@
           </button>
         {/each}
       </div>
+      <div class="harness-actions"><button class="button button-secondary" type="button" onclick={openAddDialog} disabled={controlsDisabled}>＋ Add harness</button></div>
+      </div>
 
       <div class="destination-bar">
         <div class="destination-label"><span class="eyebrow">Managed destination</span><code>{formatPath(scan?.destinationPath ?? settings.destinations[activeHarness])}</code></div>
         <div class="destination-actions">
           <button class="button button-secondary" type="button" onclick={chooseDestination} disabled={controlsDisabled}>Choose destination…</button>
+          {#if !activeDescriptor?.builtIn}<button class="button button-secondary" type="button" onclick={openManageDialog} disabled={controlsDisabled}>Manage harness</button>{/if}
           <button class="button button-secondary" type="button" onclick={openDestination} disabled={controlsDisabled}>Open folder</button>
         </div>
       </div>
 
+      {#if activeDescriptor && !activeDescriptor.destinationAvailable}
+        <p class="notice notice-error" role="alert"><span class="notice-icon" aria-hidden="true">!</span>{activeDescriptor.builtIn ? 'This configured destination is currently unavailable. Choose another folder or install a selected skill to create it.' : 'This custom harness destination is unavailable. Choose an existing skills folder or remove this registration.'}</p>
+      {/if}
       {#if scan?.warnings.length}
         <div class="scan-notices">
           {#each scan.warnings as warning}
@@ -424,7 +510,7 @@
             <div class="skill-list" aria-label="Comparison results">
               {#each filteredSkills as skill (skill.folderName)}
                 <div class="skill-row" class:focused={focusedFolder === skill.folderName}>
-                  <input type="checkbox" checked={selections[activeHarness].includes(skill.folderName)} onchange={() => toggleSelection(skill)} aria-label="Select {skill.folderName}" disabled={controlsDisabled} />
+                  <input type="checkbox" checked={activeSelections.includes(skill.folderName)} onchange={() => toggleSelection(skill)} aria-label="Select {skill.folderName}" disabled={controlsDisabled} />
                   <button class="skill-summary" type="button" onclick={() => focusedFolder = skill.folderName} aria-label="Show details for {skill.folderName}">
                     <span class="skill-title">{skill.name || skill.folderName}</span>
                     <span class="skill-folder">{skill.folderName}</span>
@@ -476,6 +562,27 @@
     </section>
     <footer><span>Local skill folder manager</span><span>Files and scripts stay on this device</span></footer>
   </main>
+
+  <dialog bind:this={addDialog} class="operation-dialog management-dialog" aria-labelledby="add-harness-title" oncancel={(event) => { if (saving || choosing) event.preventDefault() }}>
+    <div class="dialog-heading"><span class="eyebrow">Custom harness</span><h2 id="add-harness-title">Add harness</h2><p>Register an existing skills folder. The folder will stay where it is.</p></div>
+    <label class="management-field">Name<input bind:value={addName} autocomplete="off" disabled={controlsDisabled} /></label>
+    <div class="management-folder"><span class="eyebrow">Skills folder</span><code>{addDestination || 'Choose an existing folder'}</code><button class="button button-secondary" type="button" onclick={chooseCustomFolder} disabled={controlsDisabled}>Choose folder…</button></div>
+    {#if loadError}<p class="dialog-error" role="alert">{loadError}</p>{/if}
+    <div class="dialog-actions"><button class="button button-secondary" type="button" onclick={() => addDialog.close()} disabled={controlsDisabled}>Cancel</button><button class="button button-primary" type="button" onclick={addHarness} disabled={controlsDisabled || !addName.trim() || !addDestination}>Add harness</button></div>
+  </dialog>
+
+  <dialog bind:this={manageDialog} class="operation-dialog management-dialog" aria-labelledby="manage-harness-title" oncancel={(event) => { if (saving) event.preventDefault() }} onclose={() => { confirmRemoving = false }}>
+    <div class="dialog-heading"><span class="eyebrow">Custom harness</span><h2 id="manage-harness-title">Manage {activeDescriptor?.label}</h2></div>
+    {#if confirmRemoving}
+      <div class="dialog-warning"><strong>Remove this registration?</strong><p>Only the saved registration and destination mapping will be removed. The skills folder and every file in it will remain untouched.</p></div>
+      {#if loadError}<p class="dialog-error" role="alert">{loadError}</p>{/if}
+      <div class="dialog-actions"><button class="button button-secondary" type="button" onclick={() => confirmRemoving = false} disabled={controlsDisabled}>Keep harness</button><button class="button button-danger" type="button" onclick={removeHarness} disabled={controlsDisabled}>Remove registration</button></div>
+    {:else}
+      <label class="management-field">Name<input bind:value={renameValue} autocomplete="off" disabled={controlsDisabled} /></label>
+      {#if loadError}<p class="dialog-error" role="alert">{loadError}</p>{/if}
+      <div class="dialog-actions"><button class="button button-quiet" type="button" onclick={() => confirmRemoving = true} disabled={controlsDisabled}>Remove harness…</button><button class="button button-secondary" type="button" onclick={() => manageDialog.close()} disabled={controlsDisabled}>Close</button><button class="button button-primary" type="button" onclick={renameHarness} disabled={controlsDisabled || !renameValue.trim()}>Save name</button></div>
+    {/if}
+  </dialog>
 
   <dialog bind:this={installDialog} class="operation-dialog" aria-labelledby="install-title" oncancel={(event) => { if (operationRunning) event.preventDefault() }} onclose={() => { if (!operationRunning) preparedInstall = null }}>
     {#if preparedInstall}
