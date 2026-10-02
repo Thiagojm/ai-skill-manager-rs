@@ -1,5 +1,8 @@
 # Work status
 
+Current release, October 2, 2026: the user reported all final v0.1.1 installer tests passing and explicitly authorized publication. GitHub confirms v0.1.1 published at 2026-10-02T20:34:36Z with NSIS, deb, SHA256SUMS.txt and SOURCE_COMMIT.txt. Final installer acceptance is user-reported evidence without detailed logs. Public release: https://github.com/Thiagojm/ai-skill-manager-rs/releases/tag/v0.1.1. Earlier draft/pending checkpoints below are historical.
+
+
 ## Current acceptance and next release — October 2, 2026
 
 - v0.1.1 draft prepared from af297eee1ee86a37febc82e1bfca1d0df22c7430. Actual CI and Packages run 37058459917 passed both systems; uploaded NSIS/deb checksums/source identity and release downloads verified. The draft includes notes, SHA256SUMS.txt and SOURCE_COMMIT.txt. Next: user validates these exact final installers, then separately authorizes publication. No existing release assets were replaced.

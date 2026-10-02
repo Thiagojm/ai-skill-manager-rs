@@ -74,16 +74,16 @@ When scanning your source folder against an agent's destination, each skill is c
 
 ### Option 2: Ubuntu 22.04 x64 Package
 
-Download `ubuntu-amd64` from the [latest validated package run](https://github.com/Thiagojm/ai-skill-manager-rs/actions/runs/37056208952), under **Artifacts**, and extract the ZIP. Actions downloads require a GitHub login. Artifacts are retained for 14 days and include the `.deb`, `SHA256SUMS.txt`, and `SOURCE_COMMIT.txt`.
+Download the Ubuntu `.deb` and `SHA256SUMS.txt` from the [latest release](https://github.com/Thiagojm/ai-skill-manager-rs/releases/latest).
 
-Run inside the extracted directory:
+Run inside the download directory:
 
 ```bash
-sha256sum -c SHA256SUMS.txt
-sudo apt install './AI Skill Manager_0.1.0_amd64.deb'
+sha256sum --ignore-missing -c SHA256SUMS.txt
+sudo apt install './AI.Skill.Manager_0.1.1_amd64.deb'
 ```
 
-Launch **AI Skill Manager** from your application menu. APT installs the declared runtime dependencies, including `xdg-utils`. This validation package is available through Actions; it has not been added to the published Windows release.
+Launch **AI Skill Manager** from your application menu. APT installs the declared runtime dependencies, including `xdg-utils`. The release includes both the Windows installer and Ubuntu package.
 
 ### Option 3: Running from Source
 

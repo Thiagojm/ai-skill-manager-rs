@@ -1,5 +1,8 @@
 # Project context
 
+Current release, October 2, 2026: the user reported all final v0.1.1 installer tests passing and explicitly authorized publication. GitHub confirms v0.1.1 published at 2026-10-02T20:34:36Z with NSIS, deb, SHA256SUMS.txt and SOURCE_COMMIT.txt. Final installer acceptance is user-reported evidence without detailed logs. Public release: https://github.com/Thiagojm/ai-skill-manager-rs/releases/tag/v0.1.1. Earlier draft/pending checkpoints below are historical.
+
+
 AI Skill Manager is a Windows x64 and Ubuntu 22.04 x64 desktop application for managing whole local skill folders across Codex, Claude Code, Antigravity IDE, and OpenCode. The approved v1 scope is defined in the [design](specs/2026-10-01-ai-skill-manager-design.md) and [phased plan](plans/2026-10-01-ai-skill-manager-plan.md), extended by the Ubuntu support design and plan.
 
 ## Current application
