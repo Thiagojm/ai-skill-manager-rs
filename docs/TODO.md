@@ -2,6 +2,8 @@
 
 ## Ubuntu usability corrections — October 2, 2026
 
+- The user subsequently authorized commit/push and a new deb on GitHub for installation. Source commit 556da2dcf4496a80b37f36403fe02161cda4bbbd was pushed. Packages run 37056208952 completed the Ubuntu job successfully, including checks, compilation, desktop filename/category/icon inspection and upload. Downloaded ubuntu-amd64 artifact matched SHA-256 b1c8f8a1196cf4a6dda78d1447e0f0763b507db4830b4272f7203f0adcc29f7b and SOURCE_COMMIT.txt. Windows packaging was still in progress at this checkpoint. Native Ubuntu installation and acceptance of these corrections remain pending. No release assets were replaced.
+
 - The user reported confusing linked-copy comparison, repeated YAML/missing-destination notices, desktop metadata/icon issues, and an oversized GTK folder picker. They explicitly authorized local corrections and manual path entry. Commit/push, package regeneration and publication are not authorized for this scope.
 - Implemented unique confirmation warnings, a single actionable unavailable-destination notice, and an explanation of materialized-link entry-type differences. Source/destination paths can be entered in an accessible dialog and submitted with Enter; custom folder paths are editable. Backend validation rejects changed relative paths, inaccessible sources and file-valued destinations without changing saved settings. Missing built-in destinations remain allowed for confirmed installation; custom destinations must exist.
 - Linux bundling uses existing standard-density 32/128/512 icons. The packaging workflow normalizes the desktop filename to the existing identifier and checks category, unique launcher, and PNG dimensions. No version, identifier, dependencies or release assets changed.

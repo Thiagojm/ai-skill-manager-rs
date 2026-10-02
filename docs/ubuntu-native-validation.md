@@ -2,7 +2,7 @@
 
 Status: pending. The user has Ubuntu 22.04 desktop available; Ubuntu 24.04 remains pending. CI compilation and package inspection do not establish native acceptance.
 
-Use a disposable desktop environment or account. Download the `ubuntu-amd64` artifact from the [package run](https://github.com/Thiagojm/ai-skill-manager-rs/actions/runs/37046191784), extract it and run these commands inside its directory:
+Use a disposable desktop environment or account. Download the `ubuntu-amd64` artifact from the [package run](https://github.com/Thiagojm/ai-skill-manager-rs/actions/runs/37056208952), extract it and run these commands inside its directory:
 
 ```bash
 sha256sum -c SHA256SUMS.txt
@@ -10,7 +10,7 @@ cat SOURCE_COMMIT.txt
 sudo apt install './AI Skill Manager_0.1.0_amd64.deb'
 ```
 
-Expected source: `46a0db243a216d39e888b786ff1648ac49bb9c49`. Expected package SHA-256: `db0a61f56fd4b5ca4bf5d232ead5a169470437b1be06fe23405413edadca6634`.
+Expected source: `556da2dcf4496a80b37f36403fe02161cda4bbbd`. Expected package SHA-256: `b1c8f8a1196cf4a6dda78d1447e0f0763b507db4830b4272f7203f0adcc29f7b`.
 
 Create disposable skills without using real harness installations:
 
