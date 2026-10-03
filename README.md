@@ -20,13 +20,13 @@ Managing skills across multiple AI tools usually means manual folder copying, gu
 
 ## ✨ Features
 
-- 🎯 **Multi-Agent Central Hub**: Dedicated tabs for **OpenAI Codex**, **Anthropic Claude Code**, **Google Antigravity IDE**, **OpenCode**, and **Grok**, each with independent destination folder configuration.
+- 🎯 **Multi-Agent Central Hub**: Dedicated destinations for **OpenAI Codex**, **Anthropic Claude Code**, **Google Antigravity IDE**, **OpenCode**, and **Grok**, each with independent destination folder configuration.
 - 🔍 **Deep Whole-Tree Comparison**: Compares full directory trees — including nested files, helper scripts, configuration assets, empty directories, and hidden resources.
 - 🛡️ **Safe & Non-Destructive Operations**:
   - **Verified Staging**: Prepares and validates replacements before changing the installed folder. If placement fails after recycling, the app reports recovery paths.
   - **System Trash Integration**: Uninstalled or replaced folders move to the Windows Recycle Bin or Ubuntu system trash. Recycling failures abort the affected operation without a permanent-delete fallback. Restore manually; the operating system controls retention.
   - **Link Protection**: Safeguards directory junctions and symbolic links without mutating external targets.
-- ⚡ **Parallel Scanning**: Up to four inventory workers and an in-memory source snapshot reduce repeated work when switching tabs. Use **Refresh** after changing source files externally.
+- ⚡ **Parallel Scanning**: Up to four inventory workers and an in-memory source snapshot reduce repeated work when switching harnesses. Use **Refresh** after changing source files externally.
 - 🎨 **Modern & Accessible UI**: Clean dark and light modes, instant search by skill title or directory ID, status filtering, and keyboard navigation.
 - 📂 **Folder Selection**: Native folder pickers or **Enter path…** with validated absolute paths. Custom harness folder paths can also be typed directly.
 - 🐧 **Linux File Permissions**: Ordinary file permission bits participate in comparison; copying preserves executable scripts. Directory permissions follow creation/umask; ownership, ACLs, and extended attributes are not managed.
@@ -48,9 +48,9 @@ AI Skill Manager automatically resolves standard skill installation paths for po
 > [!NOTE]
 > Custom destination paths and chosen themes are automatically saved and restored on subsequent launches.
 
-Grok can also discover shared agent, Claude Code, and Cursor skills. Its tab manages only the configured destination. See the [Grok skill locations](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md#skill-locations).
+Grok can also discover shared agent, Claude Code, and Cursor skills. Its configured destination manages only the configured destination. See the [Grok skill locations](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md#skill-locations).
 
-Built-in tabs appear when their configuration folder or a saved destination exists. To manage another tool, select **Add harness**, enter a name, choose its existing skills folder, then click **Add harness**. The registration is saved locally and remains visible if that folder later becomes unavailable. Select a custom tab and use **Choose destination…** to repair its path or **Manage harness** to rename or remove it. Removing a registration only clears its saved name and path; it never deletes the skills folder or its contents.
+Built-in harnesses appear when their configuration folder or a saved destination exists. To manage another tool, select **Add harness**, enter a name, choose its existing skills folder, then click **Add harness**. The registration is saved locally and remains visible if that folder later becomes unavailable. Select a custom harness and use **Choose destination…** to repair its path or **Manage harness** to rename or remove it. Removing a registration only clears its saved name and path; it never deletes the skills folder or its contents.
 
 ---
 
@@ -139,7 +139,7 @@ library/
     SKILL.md
 ```
 
-The app remembers the last successfully selected source. Use the same button whenever you want another library. Choose a harness tab, then check **Managed destination**; **Choose destination…** changes that tab's saved destination. Merely opening a missing destination does not create it.
+The app remembers the last successfully selected source. Use the same button whenever you want another library. Choose a harness, then check **Managed destination**; **Choose destination…** changes that harness's saved destination. Merely opening a missing destination does not create it.
 
 Use **Enter path…** beside either picker to type an absolute path and press Enter. Paths are literal: `~` and environment variables are not expanded. This also provides an alternative if the GTK picker is awkward on your desktop. **Open folder** opens the active destination in Explorer on Windows or through `xdg-open` on Ubuntu.
 
@@ -147,7 +147,9 @@ Use **Enter path…** beside either picker to type an absolute path and press En
 
 ### 2. Compare and select skills
 
-Search by name or folder identity, or use **All statuses** to filter. Click a skill name to inspect its paths, metadata warnings, links, and **Tree differences**. Added/removed/changed paths describe what would change when replacing the destination with the source.
+Use the harness sidebar in wide windows or the harness selector in smaller windows. Search by name or folder identity; **Ctrl+F** focuses search outside dialogs and other editors. Status buttons show full-scan counts, independent of search. **Select filtered** adds visible rows to your selection; **Clear selection** clears all selections for the active harness, and **Clear hidden selections** clears only those outside the current filter. Hidden selections still participate in operation review.
+
+Click a skill name to inspect paths, metadata warnings, links and **Update destination differences**. The labels describe complete replacement with the source, including removal of destination-only entries. This does not preview Uninstall. Difference paths wrap in full; **Copy** copies the literal relative path. **Copy source path** and **Copy destination path** copy the configured parent paths, with inline success or failure feedback.
 
 Use the checkbox beside each skill to select it for an action; clicking its name only opens details. Selection is independent per harness. Only eligible actions are enabled: **Missing → Install**, **Different → Update**, and identifiable installed skills → **Uninstall**. Invalid sources and scan errors require reviewing the details; they cannot be installed or updated.
 
@@ -171,13 +173,13 @@ Select installed skills, including **Installed only**, and click **Uninstall**. 
 
 ### 6. Review results and refresh
 
-Each batch shows progress and an individual result for each skill; isolated failures do not stop the remaining batch. Review failures and any reported recovery paths before clicking **Done** or **Close and refresh**. The app refreshes after execution. There is no cancellation once execution starts.
+Each batch shows progress and an individual result for each skill; the summary separately counts successful results, failed results and selections skipped during preparation. Command-level failures remain explicit and unreported items are never counted as successful. Isolated failures do not stop the remaining batch. Review failures and any reported recovery paths before clicking **Done** or **Close and refresh**. The app refreshes after execution. There is no cancellation once execution starts.
 
 Links and junctions appear as warnings. When acknowledgement is required, review their targets and check the acknowledgement box to enable confirmation, or cancel. Copies materialize linked content; recycling preserves external targets.
 
 A source containing links can remain **Different** after Install or Update even when the copied content matches: the destination contains ordinary files and folders, while the source retains links. This entry-type difference is intentional.
 
-Use **Refresh** after editing files outside the app: switching tabs can reuse the source snapshot. The theme button in the upper-right corner switches between dark and light; the last choice is saved. External harnesses may need their own refresh or restart to pick up changes. OpenCode may also discover Claude/shared skills; each app tab manages only its configured destination.
+Scans show actual counts within source inventory, destination inventory and comparison stages; discovery is indeterminate until its count is known. Harness switches can explicitly report cached source reuse. Use **Refresh** after editing files outside the app to rebuild the source snapshot. If post-operation refresh fails, retained rows are marked outdated and mutations remain disabled until a successful refresh. The theme button in the upper-right corner switches between dark and light; the last choice is saved without restarting the comparison or clearing focus, filters or selections. External harnesses may need their own refresh or restart to pick up changes. OpenCode may also discover Claude/shared skills; each harness manages only its configured destination.
 
 ---
 

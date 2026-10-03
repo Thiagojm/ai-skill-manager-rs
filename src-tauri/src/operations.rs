@@ -1156,6 +1156,92 @@ mod tests {
     }
 
     #[test]
+    fn theme_persistence_preserves_revision_tokens_and_external_revalidation() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        let item = skill(&source, "one", b"before");
+        let file = temp.path().join("settings.json");
+        let mut current = Settings {
+            source: Some(source),
+            destinations: [("codex".to_string(), destination.clone())]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        assert!(crate::settings::save_file(&file, current.clone()).unwrap());
+        let response = manager::scan(&current, "codex").unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &current,
+            "codex".into(),
+            &response.revision,
+            OperationAction::Install,
+            &["one".into()],
+        )
+        .unwrap();
+        current.theme = crate::settings::Theme::Light;
+        assert!(!crate::settings::save_file(&file, current.clone()).unwrap());
+        assert!(!crate::settings::save_file(&file, current.clone()).unwrap());
+        let original = fs::read(&file).unwrap();
+        let mut invalid = current.clone();
+        invalid.source = Some(temp.path().join("missing"));
+        assert!(crate::settings::save_file(&file, invalid).is_err());
+        assert_eq!(fs::read(&file).unwrap(), original);
+        fs::write(&file, b"malformed").unwrap();
+        assert!(crate::settings::save_file(&file, current.clone()).is_err());
+        assert_eq!(fs::read(&file).unwrap(), b"malformed");
+        fs::write(&file, original).unwrap();
+        execute_operation(&prepared.token, &current, false, |_| Ok(()), |_| {}).unwrap();
+        assert!(destination.join("one").is_dir());
+
+        let response = manager::scan(&current, "codex").unwrap();
+        record_scan(&response, begin_scan());
+        let prepared = prepare_operation(
+            &current,
+            "codex".into(),
+            &response.revision,
+            OperationAction::Uninstall,
+            &["one".into()],
+        )
+        .unwrap();
+        current.theme = crate::settings::Theme::Dark;
+        assert!(!crate::settings::save_file(&file, current.clone()).unwrap());
+        fs::write(
+            destination.join("one/.hidden/nested.txt"),
+            b"externally changed",
+        )
+        .unwrap();
+        let mut events = Vec::new();
+        execute_operation(
+            &prepared.token,
+            &current,
+            false,
+            |_| panic!("must not recycle changed input"),
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert!(events.iter().any(|event| event.success == Some(false)));
+        assert!(item.source.is_dir());
+
+        current
+            .destinations
+            .insert("codex".into(), temp.path().join("other"));
+        if crate::settings::save_file(&file, current.clone()).unwrap() {
+            invalidate_plans();
+        }
+        assert!(prepare_operation(
+            &current,
+            "codex".into(),
+            &response.revision,
+            OperationAction::Install,
+            &["one".into()]
+        )
+        .is_err());
+    }
+
+    #[test]
     fn confirmed_token_is_single_use_and_partial_failures_preserve_inputs() {
         let _test_guard = test_lock();
         let temp = tempfile::tempdir().unwrap();

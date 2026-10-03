@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import appIcon from '../src-tauri/icons/128x128.png'
   import { open } from '@tauri-apps/plugin-dialog'
   import {
@@ -15,6 +15,7 @@
     type OperationEvent,
     type PrepareResponse,
     type ScanResponse,
+    type ScanProgress,
     type Settings,
     type SkillRow,
   } from './api'
@@ -24,6 +25,7 @@
   let settingsFile = ''
   let settingsError = ''
   let loadError = ''
+  let stale = false
   let scan: ScanResponse | null = null
   let activeHarness: Harness | null = null
   let search = ''
@@ -35,6 +37,32 @@
   let operationRunning = false
   let operationError = ''
   let operationEvents: OperationEvent[] = []
+  let latestOperationProgress: OperationEvent | null = null
+  let operationStarted = false
+  let operationSequence = 0
+  let scanProgress: ScanProgress | null = null
+  let copyStatus = ''
+  let copySequence = 0
+  const stageLabels = { discover_source: 'Discovering source skills', source: 'Reading source skills', discover_destination: 'Discovering destination skills', destination: 'Reading destination skills', compare: 'Comparing skills' }
+  const differenceLabels = { added: 'Will be added to destination', removed: 'Will be removed from destination', changed: 'Content or permissions changed', type_changed: 'Entry type changed' }
+  $: operationSucceeded = operationEvents.filter((event) => event.kind === 'result' && event.success === true).length
+  $: operationFailed = operationEvents.filter((event) => event.kind === 'result' && event.success === false).length
+
+  async function copyPath(path: string | null | undefined, label: string) {
+    if (!path) return
+    const sequence = ++copySequence
+    copyStatus = ''
+    try {
+      await navigator.clipboard.writeText(path)
+      if (sequence === copySequence) copyStatus = `${label} copied.`
+    } catch {
+      if (sequence === copySequence) copyStatus = `Could not copy ${label.toLowerCase()}. Clipboard access is unavailable.`
+    }
+  }
+
+  function acceptScanProgress(sequence: number, event: ScanProgress) {
+    if (sequence === scanSequence && loading) scanProgress = event
+  }
   let preparedInstall: PrepareResponse | null = null
   let acknowledgeLinks = false
   let installDialog: HTMLDialogElement
@@ -48,22 +76,79 @@
   let renameValue = ''
   let confirmRemoving = false
   let scanSequence = 0
+  let wideNavigation = window.matchMedia('(min-width: 1101px)').matches
+  let harnessNavigation: HTMLElement
+  let searchInput: HTMLInputElement
+  const statuses = ['all', 'missing', 'different', 'identical', 'installed_only', 'invalid_source', 'ambiguous', 'error']
+  $: statusCounts = countStatuses(scan?.skills ?? [])
+  $: visibleNames = new Set(filteredSkills.map((skill) => skill.folderName))
+  $: hiddenSelectedCount = activeSelections.filter((name) => !visibleNames.has(name)).length
+  $: allFilteredSelected = filteredSkills.every((skill) => selectedNames.has(skill.folderName))
+
+  function countStatuses(rows: SkillRow[]) {
+    const counts: Record<string, number> = { all: rows.length }
+    for (const row of rows) counts[row.status] = (counts[row.status] ?? 0) + 1
+    return counts
+  }
+
+  function changeSelection(mode: 'filtered' | 'all' | 'hidden') {
+    if (!activeHarness || controlsDisabled || stale) return
+    selections[activeHarness] = mode === 'all' ? [] : mode === 'hidden'
+      ? activeSelections.filter((name) => visibleNames.has(name))
+      : [...new Set([...activeSelections, ...visibleNames])]
+  }
+
+  onMount(() => {
+    const media = window.matchMedia('(min-width: 1101px)')
+    const change = async () => {
+      const transferFocus = harnessNavigation?.contains(document.activeElement)
+      wideNavigation = media.matches
+      await tick()
+      if (transferFocus) harnessNavigation?.querySelector<HTMLElement>('[aria-current="true"], select')?.focus()
+    }
+    const shortcut = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.key.toLowerCase() !== 'f' || !searchInput?.isConnected || document.querySelector('dialog[open]')) return
+      const target = event.target
+      if (target instanceof HTMLElement && target !== searchInput && target.closest('input, textarea, select, [contenteditable="true"]')) return
+      event.preventDefault()
+      searchInput?.focus()
+      searchInput?.select()
+    }
+    media.addEventListener('change', change)
+    window.addEventListener('keydown', shortcut)
+    return () => {
+      media.removeEventListener('change', change)
+      window.removeEventListener('keydown', shortcut)
+    }
+  })
+
   let choosing = false
   let selections: Record<Harness, string[]> = {}
 
+  $: rowsByFolder = new Map((scan?.skills ?? []).map((skill) => [skill.folderName, skill]))
+  $: query = search.trim().toLocaleLowerCase()
   $: filteredSkills = (scan?.skills ?? []).filter((skill) => {
-    const query = search.trim().toLocaleLowerCase()
     const matchesSearch = !query || skill.folderName.toLocaleLowerCase().includes(query)
       || skill.name?.toLocaleLowerCase().includes(query)
     return matchesSearch && (statusFilter === 'all' || skill.status === statusFilter)
   })
-  $: focusedSkill = scan?.skills.find((skill) => skill.folderName === focusedFolder) ?? null
+  $: focusedSkill = rowsByFolder.get(focusedFolder) ?? null
   $: activeSelections = activeHarness ? selections[activeHarness] ?? [] : []
   $: activeDescriptor = harnesses.find((item) => item.id === activeHarness)
   $: selectedCount = activeSelections.length
-  $: installSelectedCount = activeSelections.filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('install'))).length
-  $: updateSelectedCount = activeSelections.filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('update'))).length
-  $: uninstallSelectedCount = activeSelections.filter((name) => scan?.skills.some((skill) => skill.folderName === name && skill.eligibleActions.includes('uninstall'))).length
+  $: selectedNames = new Set(activeSelections)
+  $: actionCounts = countActions(activeSelections, rowsByFolder)
+  $: installSelectedCount = actionCounts.install
+  $: updateSelectedCount = actionCounts.update
+  $: uninstallSelectedCount = actionCounts.uninstall
+
+  function countActions(names: string[], rows: Map<string, SkillRow>) {
+    const counts = { install: 0, update: 0, uninstall: 0 }
+    for (const name of names) {
+      for (const action of rows.get(name)?.eligibleActions ?? []) counts[action]++
+    }
+    return counts
+  }
   $: controlsDisabled = loading || choosing || saving || operationPreparing || operationRunning
   $: document.documentElement.dataset.theme = settings.theme
 
@@ -79,6 +164,7 @@
     if (loading || operationRunning || operationPreparing) return
     const sequence = ++scanSequence
     loading = true
+    scanProgress = null
     loadError = ''
     try {
       const previousHarness = activeHarness
@@ -86,13 +172,15 @@
       const harness = activeHarness
       if (!harness) {
         scan = null
+        stale = false
         focusedFolder = ''
         selections = {}
         return
       }
-      const response = await scanSkills(harness, previousHarness === harness && reuseSource)
+      const response = await scanSkills(harness, previousHarness === harness && reuseSource, (event) => acceptScanProgress(sequence, event))
       if (sequence !== scanSequence) return
       scan = response
+      stale = false
       selections[harness] = selectionsFor(harness).filter((name) => response.skills.some((skill) => skill.folderName === name))
       if (!response.skills.some((skill) => skill.folderName === focusedFolder)) {
         focusedFolder = response.skills[0]?.folderName ?? ''
@@ -100,10 +188,11 @@
     } catch (error) {
       if (sequence === scanSequence) {
         scan = null
+        stale = false
         loadError = String(error)
       }
     } finally {
-      if (sequence === scanSequence) loading = false
+      if (sequence === scanSequence) { loading = false; scanProgress = null }
     }
   }
 
@@ -121,10 +210,12 @@
       : harnesses.some((harness) => harness.id === previous) ? previous : harnesses[0]?.id ?? null
     if (!activeHarness) {
       scan = null
+      stale = false
       focusedFolder = ''
       selections = {}
     } else if (previous !== activeHarness) {
       scan = null
+      stale = false
       focusedFolder = ''
       if (previous && !harnesses.some((harness) => harness.id === previous)) selections[previous] = []
     }
@@ -188,7 +279,7 @@
     }
   }
 
-  async function persist(next: Settings, changed: 'source' | 'destination' | 'theme') {
+  async function persist(next: Settings, changed: 'source' | 'destination') {
     if (saving || operationPreparing || operationRunning) return
     saving = true
     loadError = ''
@@ -289,11 +380,12 @@
     statusFilter = 'all'
     focusedFolder = ''
     scan = null
+    stale = false
     await refresh(true)
   }
 
   function toggleSelection(skill: SkillRow) {
-    if (!activeHarness) return
+    if (!activeHarness || controlsDisabled || stale) return
     const selected = new Set(selectionsFor(activeHarness))
     if (selected.has(skill.folderName)) selected.delete(skill.folderName)
     else selected.add(skill.folderName)
@@ -302,7 +394,17 @@
 
   async function toggleTheme() {
     if (controlsDisabled) return
-    await persist({ ...settings, theme: settings.theme === 'dark' ? 'light' : 'dark' }, 'theme')
+    saving = true
+    loadError = ''
+    const next: Settings = { ...settings, theme: settings.theme === 'dark' ? 'light' : 'dark' }
+    try {
+      await saveSettings(next)
+      settings = next
+    } catch (error) {
+      loadError = String(error)
+    } finally {
+      saving = false
+    }
   }
 
   function labelFor(harness: Harness) {
@@ -327,13 +429,16 @@
 
   async function prepareAction(action: OperationAction) {
     const eligibleCount = action === 'install' ? installSelectedCount : action === 'update' ? updateSelectedCount : uninstallSelectedCount
-    if (!activeHarness || !scan || !eligibleCount || loading || controlsDisabled) return
+    if (!activeHarness || !scan || !eligibleCount || stale || loading || controlsDisabled) return
     operationPreparing = true
     operationError = ''
     try {
       preparedInstall = await prepareOperation(action, activeHarness, scan.revision, selectionsFor(activeHarness))
       acknowledgeLinks = false
+      operationSequence++
       operationEvents = []
+      latestOperationProgress = null
+      operationStarted = false
       installDialog.showModal()
     } catch (error) {
       loadError = String(error)
@@ -348,9 +453,14 @@
     operationRunning = true
     operationError = ''
     operationEvents = []
+    latestOperationProgress = null
+    operationStarted = true
+    const sequence = ++operationSequence
     try {
       await executeOperation(preparedInstall.token, acknowledgeLinks, (event) => {
+        if (sequence !== operationSequence) return
         operationEvents = [...operationEvents, event]
+        if (event.kind === 'progress') latestOperationProgress = event
       })
       selections[activeHarness] = []
     } catch (error) {
@@ -364,22 +474,28 @@
   async function refreshAfterOperation() {
     if (!activeHarness) {
       scan = null
+      stale = false
       return
     }
     const sequence = ++scanSequence
     loading = true
+    scanProgress = null
     try {
-      const response = await scanSkills(activeHarness)
+      const response = await scanSkills(activeHarness, false, (event) => acceptScanProgress(sequence, event))
       if (sequence === scanSequence) {
         scan = response
+        stale = false
         focusedFolder = response.skills.some((skill) => skill.folderName === focusedFolder)
           ? focusedFolder
           : response.skills[0]?.folderName ?? ''
       }
     } catch (error) {
-      loadError = String(error)
+      if (sequence === scanSequence) {
+        stale = scan !== null
+        loadError = String(error)
+      }
     } finally {
-      if (sequence === scanSequence) loading = false
+      if (sequence === scanSequence) { loading = false; scanProgress = null }
     }
   }
 
@@ -410,23 +526,27 @@
 
   <main id="main">
     <section class="source-card" aria-labelledby="source-title">
-      <div class="source-icon" aria-hidden="true">⌘</div>
       <div class="source-copy">
-        <span class="eyebrow">Skill library</span>
-        <h1 id="source-title">Compare your skills</h1>
-        <p>Choose a parent folder. Each immediate subfolder is scanned as one skill.</p>
-        <code class:empty={!settings.source}>{formatPath(settings.source)}</code>
+        <h1 id="source-title">Skill library</h1>
+        {#if !settings.source}<p>Choose a parent folder containing skill folders.</p>{/if}
+        <details class="path-disclosure"><summary title={settings.source ?? ''}>{settings.source || 'Choose a folder containing skills'}</summary><code>{formatPath(settings.source)}</code></details>
       </div>
-      <div class="destination-actions"><button class="button button-primary" type="button" onclick={chooseSource} disabled={controlsDisabled}>
+      <div class="destination-actions"><button class="button button-secondary" type="button" onclick={() => copyPath(settings.source, 'Source path')} disabled={!settings.source}>Copy source path</button><button class="button button-primary" type="button" onclick={chooseSource} disabled={controlsDisabled}>
         <span aria-hidden="true">＋</span> Choose folder…
       </button><button class="button button-secondary" type="button" onclick={() => enterPath('source')} disabled={controlsDisabled}>Enter path…</button></div>
     </section>
 
+    {#if settingsError || stale || loadError}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable notices need keyboard focus.) -->
+    <div class="notice-region" role="region" aria-label="Application notices" tabindex="0">
     {#if settingsError}
       <div class="notice notice-error" role="alert">
         <span class="notice-icon" aria-hidden="true">!</span>
         <span>{settingsError}<small>Settings file: {settingsFile || 'unavailable'}</small></span>
       </div>
+    {/if}
+    {#if stale}
+      <div class="notice notice-error" role="alert">This comparison is outdated because the post-operation refresh failed. Refresh successfully before selecting skills or running another operation.</div>
     {/if}
     {#if loadError}
       <div class="notice notice-error" role="alert">
@@ -434,6 +554,15 @@
       </div>
     {/if}
 
+    </div>
+    {/if}
+    <p class="copy-status" role="status">{copyStatus}</p>
+    {#if loading}
+      <div class="scan-progress" role="status" aria-live="polite">
+        {#if !scanProgress || scanProgress.total === null}<span class="spinner" aria-hidden="true"></span>{/if}
+        <span>{scanProgress ? stageLabels[scanProgress.stage] : 'Starting scan'}{scanProgress?.total !== null && scanProgress ? ` (${scanProgress.completed}/${scanProgress.total})` : '…'}{scanProgress?.reusedSource ? ' — cached source reused' : ''}</span>
+      </div>
+    {/if}
     <section class="workspace" aria-label="Harness comparison">
       {#if !activeHarness}
         <div class="no-harness-state">
@@ -443,42 +572,26 @@
           <div class="destination-actions"><button class="button button-primary" type="button" onclick={openAddDialog} disabled={controlsDisabled}>＋ Add harness</button><button class="button button-secondary" type="button" onclick={() => refresh(false, true)} disabled={controlsDisabled}>Refresh</button></div>
         </div>
       {:else}
-      <div class="harness-row">
-      <div class="harness-tabs" aria-label="Harness destinations" role="tablist" aria-orientation="horizontal" tabindex="0">
-        {#each harnesses as harness (harness.id)}
-          <button
-            id="tab-{harness.id}"
-            class:active={activeHarness === harness.id}
-            type="button"
-            role="tab"
-            aria-selected={activeHarness === harness.id}
-            aria-controls="comparison-panel"
-            onclick={() => switchHarness(harness.id)}
-            onkeydown={(event) => {
-              if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
-                event.preventDefault()
-                const direction = event.key === 'ArrowRight' ? 1 : -1
-                if (harnesses.length > 1) {
-                  const current = harnesses.findIndex((item) => item.id === harness.id)
-                  const next = harnesses[(current + direction + harnesses.length) % harnesses.length]
-                  void switchHarness(next.id)
-                  document.getElementById(`tab-${next.id}`)?.focus()
-                }
-              }
-            }}
-            disabled={controlsDisabled}
-          >
-            <span class="harness-glyph" aria-hidden="true">{harness.id === 'codex' ? '◈' : harness.id === 'claude' ? '✳' : harness.id === 'antigravity' ? '◉' : '⌘'}</span>
-            {harness.label}
-          </button>
-        {/each}
-      </div>
-      <div class="harness-actions"><button class="button button-secondary" type="button" onclick={openAddDialog} disabled={controlsDisabled}>＋ Add harness</button></div>
-      </div>
-
+      <nav class="harness-navigation" bind:this={harnessNavigation} aria-label="Harness destinations">
+        {#if wideNavigation}
+          <span class="eyebrow">Harnesses</span>
+          <div class="harness-list">
+            {#each harnesses as harness (harness.id)}
+              <button type="button" aria-current={activeHarness === harness.id ? 'true' : undefined} onclick={() => switchHarness(harness.id)} disabled={controlsDisabled}>{harness.label}</button>
+            {/each}
+          </div>
+        {:else}
+          <label class="compact-harness">Harness<select value={activeHarness} onchange={(event) => switchHarness(event.currentTarget.value)} disabled={controlsDisabled}>
+            {#each harnesses as harness (harness.id)}<option value={harness.id}>{harness.label}</option>{/each}
+          </select></label>
+        {/if}
+        <button class="button button-secondary" type="button" onclick={openAddDialog} disabled={controlsDisabled}>＋ Add harness</button>
+      </nav>
+      <div class="workspace-content">
       <div class="destination-bar">
-        <div class="destination-label"><span class="eyebrow">Managed destination</span><code>{formatPath(scan?.destinationPath ?? settings.destinations[activeHarness])}</code></div>
+        <div class="destination-label"><span class="eyebrow">Managed destination</span><details class="path-disclosure"><summary title={scan?.destinationPath ?? settings.destinations[activeHarness]}>{formatPath(scan?.destinationPath ?? settings.destinations[activeHarness])}</summary><code>{formatPath(scan?.destinationPath ?? settings.destinations[activeHarness])}</code></details></div>
         <div class="destination-actions">
+          <button class="button button-secondary" type="button" onclick={() => copyPath(scan?.destinationPath ?? settings.destinations[activeHarness!], 'Destination path')} disabled={!(scan?.destinationPath ?? settings.destinations[activeHarness!])}>Copy destination path</button>
           <button class="button button-secondary" type="button" onclick={chooseDestination} disabled={controlsDisabled}>Choose destination…</button>
           <button class="button button-secondary" type="button" onclick={() => enterPath('destination')} disabled={controlsDisabled}>Enter path…</button>
           {#if !activeDescriptor?.builtIn}<button class="button button-secondary" type="button" onclick={openManageDialog} disabled={controlsDisabled}>Manage harness</button>{/if}
@@ -486,6 +599,9 @@
         </div>
       </div>
 
+      {#if (activeDescriptor && !activeDescriptor.destinationAvailable) || scan?.warnings.length}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable notices need keyboard focus.) -->
+      <div class="notice-region" role="region" aria-label="Comparison notices" tabindex="0">
       {#if activeDescriptor && !activeDescriptor.destinationAvailable}
         <p class="notice notice-error" role="alert"><span class="notice-icon" aria-hidden="true">!</span>{activeDescriptor.builtIn ? 'This configured destination is currently unavailable. Choose another folder or install a selected skill to create it.' : 'This custom harness destination is unavailable. Choose an existing skills folder or remove this registration.'}</p>
       {/if}
@@ -497,35 +613,36 @@
         </div>
       {/if}
 
-      <div id="comparison-panel" role="tabpanel" aria-labelledby="tab-{activeHarness}" class="comparison-panel">
+      </div>
+      {/if}
+      <div id="comparison-panel" class="comparison-panel" aria-label="Skills comparison">
         <div class="list-pane">
           <div class="list-toolbar">
-            <div><h2>Skills</h2><span class="result-count">{filteredSkills.length} {filteredSkills.length === 1 ? 'result' : 'results'}</span></div>
+            <h2 class="sr-only">Skills</h2>
             <div class="operation-actions">
-              <button class="button button-primary install-button" type="button" onclick={() => prepareAction('install')} disabled={!installSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for installation">Install{installSelectedCount ? ` (${installSelectedCount})` : ''}</button>
-              <button class="button button-secondary install-button" type="button" onclick={() => prepareAction('update')} disabled={!updateSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for update">Update{updateSelectedCount ? ` (${updateSelectedCount})` : ''}</button>
-              <button class="button button-quiet install-button" type="button" onclick={() => prepareAction('uninstall')} disabled={!uninstallSelectedCount || loading || controlsDisabled} aria-label="Review selected skills for uninstallation">Uninstall{uninstallSelectedCount ? ` (${uninstallSelectedCount})` : ''}</button>
+              <button class="button button-primary install-button" type="button" onclick={() => prepareAction('install')} disabled={!installSelectedCount || stale || loading || controlsDisabled} aria-label="Review selected skills for installation">Install{installSelectedCount ? ` (${installSelectedCount})` : ''}</button>
+              <button class="button button-secondary install-button" type="button" onclick={() => prepareAction('update')} disabled={!updateSelectedCount || stale || loading || controlsDisabled} aria-label="Review selected skills for update">Update{updateSelectedCount ? ` (${updateSelectedCount})` : ''}</button>
+              <button class="button button-quiet install-button" type="button" onclick={() => prepareAction('uninstall')} disabled={!uninstallSelectedCount || stale || loading || controlsDisabled} aria-label="Review selected skills for uninstallation">Uninstall{uninstallSelectedCount ? ` (${uninstallSelectedCount})` : ''}</button>
               <button class="button button-quiet" type="button" onclick={() => refresh(false, true)} disabled={loading || controlsDisabled} aria-label="Refresh comparison">↻ <span>Refresh</span></button>
             </div>
           </div>
           <div class="filters">
-            <label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Search skills</span><input bind:value={search} placeholder="Search skills…" /></label>
-            <label class="filter-field"><span class="sr-only">Filter by status</span>
-              <select bind:value={statusFilter} aria-label="Filter by status">
-                <option value="all">All statuses</option>
-                <option value="missing">Missing</option>
-                <option value="identical">Identical</option>
-                <option value="different">Different</option>
-                <option value="installed_only">Installed only</option>
-                <option value="invalid_source">Invalid source</option>
-                <option value="error">Scan error</option>
-                <option value="ambiguous">Ambiguous</option>
-              </select>
-            </label>
+            <label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Search skills</span><input bind:this={searchInput} bind:value={search} placeholder="Search skills…" /></label><span class="result-count">{filteredSkills.length} {filteredSkills.length === 1 ? 'result' : 'results'}</span>
           </div>
+          <div class="status-filters" aria-label="Filter by status">
+            {#each statuses as status}
+              <button type="button" aria-pressed={statusFilter === status} onclick={() => statusFilter = status}>{status === 'all' ? 'All' : statusLabel(status)} <span>{statusCounts[status] ?? 0}</span></button>
+            {/each}
+          </div>
+          <div class="selection-controls">
+            <button class="button button-quiet" type="button" onclick={() => changeSelection('filtered')} disabled={controlsDisabled || stale || !filteredSkills.length || allFilteredSelected}>Select filtered</button>
+            <button class="button button-quiet" type="button" onclick={() => changeSelection('all')} disabled={controlsDisabled || stale || !selectedCount}>Clear selection</button>
+            <button class="button button-quiet" type="button" onclick={() => changeSelection('hidden')} disabled={controlsDisabled || stale || !hiddenSelectedCount}>Clear hidden selections</button>
+          </div>
+          {#if selectedCount > 0}<p class="selection-note">{selectedCount} selected for review · {hiddenSelectedCount} hidden by filters</p>{/if}
 
           {#if loading && !scan}
-            <div class="empty-state"><span class="spinner" aria-hidden="true"></span><p>Scanning folders…</p></div>
+            <div class="empty-state"><p>Scanning folders…</p></div>
           {:else if !settings.source && !(scan?.skills.length)}
             <div class="empty-state"><span class="empty-icon" aria-hidden="true">▧</span><h3>Choose a skill library</h3><p>Select a folder to compare its skills with {labelFor(activeHarness)}.</p></div>
           {:else if filteredSkills.length === 0}
@@ -534,7 +651,7 @@
             <div class="skill-list" aria-label="Comparison results">
               {#each filteredSkills as skill (skill.folderName)}
                 <div class="skill-row" class:focused={focusedFolder === skill.folderName}>
-                  <input type="checkbox" checked={activeSelections.includes(skill.folderName)} onchange={() => toggleSelection(skill)} aria-label="Select {skill.folderName}" disabled={controlsDisabled} />
+                  <input type="checkbox" checked={selectedNames.has(skill.folderName)} onchange={() => toggleSelection(skill)} aria-label="Select {skill.folderName}" disabled={controlsDisabled || stale} />
                   <button class="skill-summary" type="button" onclick={() => focusedFolder = skill.folderName} aria-label="Show details for {skill.folderName}">
                     <span class="skill-title">{skill.name || skill.folderName}</span>
                     <span class="skill-folder">{skill.folderName}</span>
@@ -544,7 +661,6 @@
               {/each}
             </div>
           {/if}
-          {#if selectedCount > 0}<p class="selection-note">{selectedCount} selected for review</p>{/if}
         </div>
 
         <aside class="details-pane" aria-label="Skill details">
@@ -572,8 +688,9 @@
               </div>
             {/if}
             {#if focusedSkill.differences.length}
-              <div class="differences"><div class="section-heading"><strong>Tree differences</strong><span>{focusedSkill.differences.length}</span></div>
-                <ul>{#each focusedSkill.differences as difference}<li><span class="diff-kind diff-{difference.kind}">{difference.kind.replace('_', ' ')}</span><code>{difference.path}</code></li>{/each}</ul>
+              <div class="differences"><div class="section-heading"><strong>Update destination differences</strong><span>{focusedSkill.differences.length}</span></div>
+                <p>Update replaces the complete destination folder, including removal of destination-only entries. This does not preview Uninstall. Copies materialize links, so linked sources can remain Different.</p>
+                <ul>{#each focusedSkill.differences as difference}<li><span class="diff-kind diff-{difference.kind}">{differenceLabels[difference.kind]}</span><code>{difference.path}</code><button class="button button-secondary copy-difference" type="button" aria-label={`Copy difference path ${difference.path}`} onclick={() => copyPath(difference.path, 'Difference path')}>Copy</button></li>{/each}</ul>
               </div>
             {:else if focusedSkill.status === 'identical'}
               <div class="identical-note"><span aria-hidden="true">✓</span> Complete folder trees match</div>
@@ -582,6 +699,7 @@
             <div class="details-empty"><span class="empty-icon" aria-hidden="true">⌑</span><h3>Skill details</h3><p>Select a skill row to see its paths, warnings, and file-level differences.</p></div>
           {/if}
         </aside>
+      </div>
       </div>
       {/if}
     </section>
@@ -653,10 +771,13 @@
           {/each}
         </div>
       {/if}
+      {#if operationStarted}
+        <p class="operation-summary" role="status">{operationSucceeded} successful · {operationFailed} failed · {preparedInstall.skipped.length} skipped during preparation{operationRunning ? ' · Running' : ''}</p>
+      {/if}
       {#if operationError}<p class="dialog-error" role="alert">{operationError}</p>{/if}
       <div class="dialog-actions">
         {#if operationRunning}
-          {@const current = [...operationEvents].reverse().find((event) => event.kind === 'progress')}
+          {@const current = latestOperationProgress}
           <span class="operation-progress" aria-live="polite">{current?.folderName ? `${preparedInstall.action} ${current.folderName}` : preparedInstall.action} ({current?.completed ?? 0}/{current?.total ?? preparedInstall.eligible.length})</span>
         {:else if operationEvents.some((event) => event.kind === 'finished')}
           <button class="button button-primary" type="button" onclick={closeInstallDialog}>Done</button>

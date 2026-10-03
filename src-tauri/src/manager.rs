@@ -5,7 +5,10 @@ use std::{
     fs,
     io::{self, Read},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
 };
 
 use crate::settings::{self, Settings};
@@ -68,6 +71,32 @@ pub struct ScanResponse {
     pub(crate) resolved_destination_path: PathBuf,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanProgress {
+    pub stage: &'static str,
+    pub completed: usize,
+    pub total: Option<usize>,
+    pub reused_source: bool,
+}
+
+type ProgressSink<'a> = dyn Fn(ScanProgress) + Sync + 'a;
+
+fn report(
+    progress: &ProgressSink<'_>,
+    stage: &'static str,
+    completed: usize,
+    total: Option<usize>,
+    reused_source: bool,
+) {
+    progress(ScanProgress {
+        stage,
+        completed,
+        total,
+        reused_source,
+    });
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct Metadata {
     name: Option<String>,
@@ -110,13 +139,26 @@ pub(crate) struct SourceCache {
 }
 
 // ponytail: at most four I/O workers per scan; tune only with measured disk contention.
+#[cfg(test)]
 fn inventory_batch(paths: Vec<PathBuf>) -> BTreeMap<PathBuf, Result<TreeScan, String>> {
+    inventory_batch_progress(paths, "source", &|_| {})
+}
+
+fn inventory_batch_progress(
+    paths: Vec<PathBuf>,
+    stage: &'static str,
+    progress: &ProgressSink<'_>,
+) -> BTreeMap<PathBuf, Result<TreeScan, String>> {
+    let total = paths.len();
+    let completed = Mutex::new(0);
+    report(progress, stage, 0, Some(total), false);
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
     let chunk_size = paths.len().div_ceil(workers).max(1);
     std::thread::scope(|scope| {
         let handles: Vec<_> = paths
             .chunks(chunk_size)
             .map(|chunk| {
+                let completed = &completed;
                 scope.spawn(move || {
                     chunk
                         .iter()
@@ -128,6 +170,11 @@ fn inventory_batch(paths: Vec<PathBuf>) -> BTreeMap<PathBuf, Result<TreeScan, St
                                 path.display(),
                                 started.elapsed()
                             );
+                            {
+                                let mut count = completed.lock().unwrap_or_else(|e| e.into_inner());
+                                *count += 1;
+                                report(progress, stage, *count, Some(total), false);
+                            }
                             (path.clone(), tree)
                         })
                         .collect::<Vec<_>>()
@@ -146,11 +193,22 @@ pub fn scan(settings: &Settings, harness: &str) -> Result<ScanResponse, String> 
     scan_cached(settings, harness, &mut SourceCache::default(), false)
 }
 
+#[cfg(test)]
 pub(crate) fn scan_cached(
     settings: &Settings,
     harness: &str,
     cache: &mut SourceCache,
     reuse_source: bool,
+) -> Result<ScanResponse, String> {
+    scan_cached_progress(settings, harness, cache, reuse_source, &|_| {})
+}
+
+pub(crate) fn scan_cached_progress(
+    settings: &Settings,
+    harness: &str,
+    cache: &mut SourceCache,
+    reuse_source: bool,
+    progress: &ProgressSink<'_>,
 ) -> Result<ScanResponse, String> {
     let started = std::time::Instant::now();
     if !reuse_source {
@@ -178,30 +236,44 @@ pub(crate) fn scan_cached(
     if !reuse_source || cache.parent != cache_key {
         // Clear before reading so a failed refresh cannot revive an older snapshot.
         *cache = SourceCache::default();
+        report(progress, "discover_source", 0, None, false);
         let source_skills = if let Some(path) = &source {
             read_source(path)?
         } else {
             BTreeMap::new()
         };
-        let trees = inventory_batch(
+        let trees = inventory_batch_progress(
             source_skills
                 .values()
                 .filter(|skill| !skill.ambiguous && skill.metadata_error.is_none())
                 .map(|skill| skill.path.clone())
                 .collect(),
+            "source",
+            progress,
         );
         cache.parent = cache_key;
         cache.skills = source_skills;
         cache.trees = trees;
+    } else {
+        report(
+            progress,
+            "source",
+            cache.trees.len(),
+            Some(cache.trees.len()),
+            true,
+        );
     }
     let mut source_skills = cache.skills.clone();
+    report(progress, "discover_destination", 0, None, false);
     let mut installed = read_installed(&destination)?;
-    let mut installed_trees = inventory_batch(
+    let mut installed_trees = inventory_batch_progress(
         installed
             .values()
             .filter(|skill| !skill.ambiguous)
             .map(|skill| skill.path.clone())
             .collect(),
+        "destination",
+        progress,
     );
 
     let keys: BTreeSet<String> = source_skills
@@ -209,7 +281,9 @@ pub(crate) fn scan_cached(
         .chain(installed.keys())
         .cloned()
         .collect();
-    let mut skills = Vec::with_capacity(keys.len());
+    let total = keys.len();
+    report(progress, "compare", 0, Some(total), false);
+    let mut skills = Vec::with_capacity(total);
     for key in keys {
         let source_skill = source_skills.remove(&key);
         let installed_skill = installed.remove(&key);
@@ -243,6 +317,7 @@ pub(crate) fn scan_cached(
             row.status = "ambiguous".into();
             row.error = Some("More than one folder has this Windows-insensitive identity. Resolve the name collision before managing it.".into());
             skills.push(row);
+            report(progress, "compare", skills.len(), Some(total), false);
             continue;
         }
 
@@ -266,6 +341,7 @@ pub(crate) fn scan_cached(
                     row.eligible_actions.push("uninstall".into());
                 }
                 skills.push(row);
+                report(progress, "compare", skills.len(), Some(total), false);
                 continue;
             }
         } else if let Some(installed_skill) = &installed_skill {
@@ -363,6 +439,7 @@ pub(crate) fn scan_cached(
             row.eligible_actions.push("uninstall".into());
         }
         skills.push(row);
+        report(progress, "compare", skills.len(), Some(total), false);
     }
 
     if !destination.exists() {
@@ -1292,6 +1369,233 @@ mod tests {
         fs::write(parent.join("BadUtf8").join("SKILL.md"), [0xff, 0xfe]).unwrap();
         let skills = read_source(&parent).unwrap();
         assert!(skills[&identity_key("BadUtf8")].metadata_error.is_some());
+    }
+
+    #[test]
+    fn progress_tracks_stages_rows_and_cached_source_without_changing_response() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        for (name, content) in [
+            ("Missing", "only"),
+            ("Identical", "same"),
+            ("Different", "new"),
+        ] {
+            skill(&source, name, content);
+        }
+        for (name, content) in [
+            ("Identical", "same"),
+            ("Different", "old"),
+            ("Installed", "only"),
+        ] {
+            skill(&destination, name, content);
+        }
+        file(&source.join("Invalid").join("SKILL.md"), &[0xff]);
+        let settings = Settings {
+            source: Some(source.clone()),
+            destinations: [("codex".into(), destination)].into_iter().collect(),
+            ..Settings::default()
+        };
+        let events = Mutex::new(Vec::new());
+        let mut cache = SourceCache::default();
+        let response = scan_cached_progress(&settings, "codex", &mut cache, false, &|event| {
+            events.lock().unwrap().push(event)
+        })
+        .unwrap();
+        let recorded = events.lock().unwrap();
+        let stages: Vec<_> =
+            recorded
+                .iter()
+                .map(|event| event.stage)
+                .fold(Vec::new(), |mut stages, stage| {
+                    if stages.last() != Some(&stage) {
+                        stages.push(stage);
+                    }
+                    stages
+                });
+        assert_eq!(
+            stages,
+            [
+                "discover_source",
+                "source",
+                "discover_destination",
+                "destination",
+                "compare"
+            ]
+        );
+        for stage in ["source", "destination", "compare"] {
+            let counts: Vec<_> = recorded
+                .iter()
+                .filter(|event| event.stage == stage)
+                .collect();
+            let total = counts[0].total.unwrap();
+            assert_eq!(
+                counts
+                    .iter()
+                    .map(|event| event.completed)
+                    .collect::<Vec<_>>(),
+                (0..=total).collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(recorded.last().unwrap().completed, 5);
+        assert_eq!(
+            recorded
+                .iter()
+                .find(|event| event.stage == "source")
+                .unwrap()
+                .total,
+            Some(3)
+        );
+        drop(recorded);
+        let plain = scan(&settings, "codex").unwrap();
+        let mut actual = serde_json::to_value(&response).unwrap();
+        let mut expected = serde_json::to_value(&plain).unwrap();
+        actual.as_object_mut().unwrap().remove("revision");
+        expected.as_object_mut().unwrap().remove("revision");
+        assert_eq!(actual, expected);
+        skill(&source, "Missing", "modified after caching");
+        events.lock().unwrap().clear();
+        let cached = scan_cached_progress(&settings, "codex", &mut cache, true, &|event| {
+            events.lock().unwrap().push(event)
+        })
+        .unwrap();
+        assert_eq!(
+            cached.skills[3].source_fingerprint,
+            response.skills[3].source_fingerprint
+        );
+        let recorded = events.lock().unwrap();
+        assert!(!recorded
+            .iter()
+            .any(|event| event.stage == "discover_source"));
+        assert!(recorded[0].reused_source);
+        assert_eq!((recorded[0].completed, recorded[0].total), (3, Some(3)));
+    }
+
+    #[test]
+    fn progress_counts_concurrent_inventories_including_failure_and_empty_stages() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut paths = Vec::new();
+        for i in 0..24 {
+            paths.push(skill_path_for_progress(temp.path(), i));
+        }
+        paths.push(temp.path().join("missing"));
+        let events = Mutex::new(Vec::new());
+        let result = inventory_batch_progress(paths, "destination", &|event| {
+            events.lock().unwrap().push(event)
+        });
+        assert!(result[&temp.path().join("missing")].is_err());
+        assert_eq!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|event| event.completed)
+                .collect::<Vec<_>>(),
+            (0..=25).collect::<Vec<_>>()
+        );
+        let settings = Settings {
+            destinations: [("codex".into(), temp.path().join("empty"))]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        events.lock().unwrap().clear();
+        scan_cached_progress(
+            &settings,
+            "codex",
+            &mut SourceCache::default(),
+            false,
+            &|event| events.lock().unwrap().push(event),
+        )
+        .unwrap();
+        for event in events.lock().unwrap().iter() {
+            assert_eq!(event.completed, 0);
+            assert_eq!(
+                event.total,
+                if event.stage.starts_with("discover") {
+                    None
+                } else {
+                    Some(0)
+                }
+            );
+        }
+    }
+
+    fn skill_path_for_progress(parent: &Path, index: usize) -> PathBuf {
+        let name = format!("Skill{index}");
+        skill(parent, &name, "data");
+        parent.join(name)
+    }
+
+    #[test]
+    fn comparison_progress_counts_ambiguous_and_inventory_error_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        skill(&source, "Ambiguous", "data");
+        skill(&source, "Broken", "data");
+        let settings = Settings {
+            source: Some(source.clone()),
+            destinations: [("codex".into(), temp.path().join("destination"))]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let mut cache = SourceCache::default();
+        scan_cached(&settings, "codex", &mut cache, false).unwrap();
+        cache
+            .skills
+            .get_mut(&identity_key("Ambiguous"))
+            .unwrap()
+            .ambiguous = true;
+        cache.trees.insert(
+            source.join("Broken"),
+            Err("Injected inventory failure".into()),
+        );
+        let events = Mutex::new(Vec::new());
+        let response = scan_cached_progress(&settings, "codex", &mut cache, true, &|event| {
+            events.lock().unwrap().push(event)
+        })
+        .unwrap();
+        assert_eq!(response.skills[0].status, "ambiguous");
+        assert_eq!(response.skills[1].status, "error");
+        assert_eq!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| event.stage == "compare")
+                .map(|event| event.completed)
+                .collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn failed_progress_delivery_does_not_fail_scanning() {
+        let temp = tempfile::tempdir().unwrap();
+        skill(temp.path(), "Example", "data");
+        let settings = Settings {
+            source: Some(temp.path().to_path_buf()),
+            destinations: [("codex".into(), temp.path().join("destination"))]
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let channel = tauri::ipc::Channel::<ScanProgress>::new(|_| {
+            Err(tauri::Error::Io(std::io::Error::other("delivery refused")))
+        });
+        let response = scan_cached_progress(
+            &settings,
+            "codex",
+            &mut SourceCache::default(),
+            false,
+            &|event| {
+                let _ = channel.send(event);
+            },
+        )
+        .unwrap();
+        assert_eq!(response.skills.len(), 1);
+        assert_eq!(response.skills[0].status, "missing");
     }
 
     #[test]

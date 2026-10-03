@@ -229,12 +229,12 @@ fn load_file(file: &Path) -> (Settings, Option<String>) {
     }
 }
 
-pub fn save(app: &AppHandle, settings: Settings) -> Result<(), String> {
+pub fn save(app: &AppHandle, settings: Settings) -> Result<bool, String> {
     let file = settings_file(app)?;
     save_file(&file, settings)
 }
 
-fn save_file(file: &Path, settings: Settings) -> Result<(), String> {
+pub(crate) fn save_file(file: &Path, settings: Settings) -> Result<bool, String> {
     let previous = match fs::read(file) {
         Ok(bytes) => {
             let previous = serde_json::from_slice::<Settings>(&bytes).map_err(|error| {
@@ -263,6 +263,18 @@ fn save_file(file: &Path, settings: Settings) -> Result<(), String> {
     }
     validate_destinations(&settings, previous.as_ref())?;
 
+    let mut effective_previous = previous.clone().unwrap_or_else(defaults);
+    let mut effective_next = settings.clone();
+    for (harness, path) in defaults().destinations {
+        effective_previous
+            .destinations
+            .entry(harness.clone())
+            .or_insert(path.clone());
+        effective_next.destinations.entry(harness).or_insert(path);
+    }
+    let operational_change = effective_previous.source != effective_next.source
+        || effective_previous.destinations != effective_next.destinations
+        || effective_previous.custom_harnesses != effective_next.custom_harnesses;
     let bytes = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
     let parent = file
         .parent()
@@ -290,7 +302,8 @@ fn save_file(file: &Path, settings: Settings) -> Result<(), String> {
     if write_result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    write_result.map_err(|error| format!("Could not save {}: {error}", file.display()))
+    write_result.map_err(|error| format!("Could not save {}: {error}", file.display()))?;
+    Ok(operational_change)
 }
 
 fn validate_registry(settings: &Settings) -> Result<(), String> {
@@ -377,6 +390,28 @@ mod tests {
     use super::*;
 
     const CUSTOM: &str = "custom-550e8400-e29b-41d4-a716-446655440000";
+
+    #[test]
+    fn missing_defaults_are_effective_noops_and_registry_changes_are_operational() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("settings.json");
+        fs::write(&file, b"{}").unwrap();
+        let (mut current, error) = load_file(&file);
+        assert!(error.is_none());
+        assert!(!save_file(&file, current.clone()).unwrap());
+        current.theme = Theme::Light;
+        assert!(!save_file(&file, current.clone()).unwrap());
+        let id = "custom-00000000-0000-0000-0000-000000000001".to_string();
+        current
+            .custom_harnesses
+            .insert(id.clone(), "Example".into());
+        current
+            .destinations
+            .insert(id.clone(), temp.path().to_path_buf());
+        assert!(save_file(&file, current.clone()).unwrap());
+        current.custom_harnesses.insert(id, "Renamed".into());
+        assert!(save_file(&file, current).unwrap());
+    }
 
     #[test]
     fn old_settings_load_with_empty_custom_registry_and_builtin_defaults() {

@@ -1,6 +1,6 @@
 # Usability and performance implementation plan
 
-Status: Prepared October 3, 2026 against the [approved specification](../specs/2026-10-03-usability-performance-design.md). The user approved all written design requirements. No implementation phase is authorized or started.
+Status: Prepared October 3, 2026 against the [approved specification](../specs/2026-10-03-usability-performance-design.md). The user approved all written design requirements. The user subsequently authorized Phase 1 implementation and planning commit/push on October 3, 2026. The user accepted Phase 1 and authorized Phase 2 on October 3, 2026. The user subsequently reported Phase 2 testing excellent, accepted it and authorized Phase 3. Phase 3 is implemented locally with automated/mocked-browser evidence recorded in project context, awaiting final native user acceptance. Commit/push and release actions remain separately gated.
 
 ## Goal, prerequisites and boundaries
 
@@ -78,3 +78,5 @@ git diff --check
 Use existing disposable Rust testing patterns and simulated recycling. Browser checks must mock Tauri IPC and channel delivery, including settings/operation failures, rather than acting on real harness installations; a dev server may be used without committing generated fixtures. Meaningful frontend state scenarios can be tested through those browser checks without adding a test dependency. Inspect screenshots, not only DOM assertions. Native validation uses `npm.cmd run tauri dev` with disposable folders.
 
 At each checkpoint update `docs/TODO.md` with phase status and authorization boundaries, `docs/PROJECT_CONTEXT.md` with actual product changes and evidence, and `docs/DECISIONS.md` only for durable choices. Keep the approved spec and this plan authoritative; record material deviations and obtain renewed approval. Do not claim Linux/native/clipboard coverage from Windows Rust or mocked browser tests, and do not advertise quantitative scan speed gains without measurements.
+
+Implementation note: Tauri 2.12.1 does not implement CommandArg for Option<Channel<T>>. The optional onProgress argument deserializes as Option<JavaScriptChannelId> and immediately binds to Channel<ScanProgress> on the invoking Webview, using Tauri's documented adapter. Its frontend wire contract remains an optional Channel; omitted/null callers remain supported. No capability or dependency changed.

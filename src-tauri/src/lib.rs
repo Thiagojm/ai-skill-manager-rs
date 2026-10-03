@@ -15,8 +15,9 @@ fn load_settings(app: tauri::AppHandle) -> settings::SettingsResponse {
 #[tauri::command]
 fn save_settings(app: tauri::AppHandle, settings: settings::Settings) -> Result<(), String> {
     let _guard = operations::acquire()?;
-    settings::save(&app, settings)?;
-    operations::invalidate_plans();
+    if settings::save(&app, settings)? {
+        operations::invalidate_plans();
+    }
     Ok(())
 }
 
@@ -130,8 +131,11 @@ async fn scan_skills(
     app: tauri::AppHandle,
     harness: manager::Harness,
     reuse_source: bool,
+    on_progress: Option<tauri::ipc::JavaScriptChannelId>,
+    webview: tauri::Webview,
     cache: tauri::State<'_, std::sync::Arc<std::sync::Mutex<manager::SourceCache>>>,
 ) -> Result<manager::ScanResponse, String> {
+    let on_progress = on_progress.map(|id| id.channel_on::<_, manager::ScanProgress>(webview));
     let cache = cache.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = operations::acquire()?;
@@ -141,11 +145,16 @@ async fn scan_skills(
         }
         let generation = operations::begin_scan();
         let settings = response.settings;
-        let response = manager::scan_cached(
+        let response = manager::scan_cached_progress(
             &settings,
             &harness,
             &mut cache.lock().unwrap_or_else(|e| e.into_inner()),
             reuse_source,
+            &|event| {
+                if let Some(channel) = &on_progress {
+                    let _ = channel.send(event);
+                }
+            },
         )?;
         operations::record_scan(&response, generation);
         Ok(response)

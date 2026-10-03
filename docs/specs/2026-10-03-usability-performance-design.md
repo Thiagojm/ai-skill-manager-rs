@@ -1,6 +1,6 @@
 # Usability and performance design
 
-Status: The user approved the conversational design and subsequently explicitly approved this written specification on October 3, 2026. Approval includes all review recommendations, a harness sidebar, and a top selector for smaller windows. The [implementation plan](../plans/2026-10-03-usability-performance-plan.md) is prepared; implementation has not been authorized or started.
+Status: The user approved the conversational design and subsequently explicitly approved this written specification on October 3, 2026. Approval includes all review recommendations, a harness sidebar, and a top selector for smaller windows. The [implementation plan](../plans/2026-10-03-usability-performance-plan.md) is prepared; the user subsequently authorized Phase 1 on October 3, 2026. The user accepted Phase 1 and authorized Phase 2, then reported Phase 2 testing excellent and authorized Phase 3. All three phases are implemented locally; Phase 3 awaits final native user acceptance. Commit/push and release actions remain separately gated.
 
 ## Context and goal
 

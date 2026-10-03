@@ -50,6 +50,13 @@ export interface SkillRow {
   eligibleActions: OperationAction[]
 }
 
+export interface ScanProgress {
+  stage: 'discover_source' | 'source' | 'discover_destination' | 'destination' | 'compare'
+  completed: number
+  total: number | null
+  reusedSource: boolean
+}
+
 export interface ScanResponse {
   revision: string
   harness: Harness
@@ -86,7 +93,11 @@ export interface OperationEvent {
 export const loadSettings = () => invoke<SettingsResponse>('load_settings')
 export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings })
 export const openHarnessFolder = (harness: Harness) => invoke<void>('open_harness_folder', { harness })
-export const scanSkills = (harness: Harness, reuseSource = false) => invoke<ScanResponse>('scan_skills', { harness, reuseSource })
+export const scanSkills = (harness: Harness, reuseSource = false, onProgress?: (event: ScanProgress) => void) => {
+  const channel = onProgress ? new Channel<ScanProgress>() : undefined
+  if (channel && onProgress) channel.onmessage = onProgress
+  return invoke<ScanResponse>('scan_skills', { harness, reuseSource, onProgress: channel ?? null })
+}
 export const prepareOperation = (action: OperationAction, harness: Harness, revision: string, selected: string[]) =>
   invoke<PrepareResponse>('prepare_operation', { action, harness, revision, selected })
 export const executeOperation = (
