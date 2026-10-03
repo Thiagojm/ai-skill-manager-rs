@@ -16,6 +16,7 @@ struct ConfigurationRoots {
     claude: Option<PathBuf>,
     antigravity: Option<PathBuf>,
     open_code: Option<PathBuf>,
+    grok: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -101,8 +102,9 @@ fn resolve_configuration_roots(
             .as_ref()
             .map(|path| path.join(".gemini").join("config")),
         open_code: xdg_config_home
-            .or_else(|| home.map(|path| path.join(".config")))
+            .or_else(|| home.as_ref().map(|path| path.join(".config")))
             .map(|path| path.join("opencode")),
+        grok: home.as_ref().map(|path| path.join(".grok")),
     }
 }
 
@@ -112,6 +114,7 @@ fn configuration_root<'a>(harness: &str, roots: &'a ConfigurationRoots) -> Optio
         "claude" => roots.claude.as_deref(),
         "antigravity" => roots.antigravity.as_deref(),
         "open_code" => roots.open_code.as_deref(),
+        "grok" => roots.grok.as_deref(),
         _ => None,
     }
 }
@@ -160,6 +163,7 @@ fn builtin_label(id: &str) -> Option<&'static str> {
         "claude" => Some("Claude Code"),
         "antigravity" => Some("Antigravity IDE"),
         "open_code" => Some("OpenCode"),
+        "grok" => Some("Grok"),
         _ => None,
     }
 }
@@ -393,7 +397,7 @@ mod tests {
         let (settings, error) = load_file(&file);
         assert!(error.is_none());
         assert_eq!(settings.custom_harnesses.len(), 0);
-        assert_eq!(settings.destinations.len(), 4);
+        assert_eq!(settings.destinations.len(), 5);
         assert_eq!(settings.destinations["codex"], override_path);
         assert_eq!(settings.source, Some(source));
         assert_eq!(settings.theme, Theme::Light);
@@ -405,13 +409,44 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let roots = resolve_configuration_roots(Some(home.path().to_path_buf()), None, None);
         let settings = defaults_with_roots(&roots);
-        assert_eq!(settings.destinations.len(), 4);
+        assert_eq!(settings.destinations.len(), 5);
+        assert_eq!(
+            settings.destinations["grok"],
+            home.path().join(".grok/skills")
+        );
         assert_eq!(settings.theme, Theme::Dark);
         assert!(settings
             .destinations
             .values()
             .all(|destination| !destination.exists()));
         assert!(home.path().read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn grok_visibility_follows_configuration_and_destination_override() {
+        let home = tempfile::tempdir().unwrap();
+        let roots = resolve_configuration_roots(Some(home.path().into()), None, None);
+        let mut settings = defaults_with_roots(&roots);
+        let descriptor = |settings: &Settings| {
+            harness_descriptors(settings, &roots)
+                .into_iter()
+                .find(|descriptor| descriptor.id == "grok")
+                .unwrap()
+        };
+        assert!(!descriptor(&settings).visible);
+        fs::create_dir(home.path().join(".grok")).unwrap();
+        let grok = descriptor(&settings);
+        assert!(grok.visible && grok.built_in);
+        assert_eq!(grok.label, "Grok");
+        assert!(!grok.destination_available);
+        assert!(!settings.destinations["grok"].exists());
+        fs::remove_dir(home.path().join(".grok")).unwrap();
+        let destination = home.path().join("override");
+        fs::create_dir(&destination).unwrap();
+        settings.destinations.insert("grok".into(), destination);
+        assert!(descriptor(&settings).visible);
+        assert!(descriptor(&settings).destination_available);
+        assert!(validate_registry(&settings).is_ok());
     }
 
     #[test]
@@ -428,6 +463,7 @@ mod tests {
         assert_eq!(roots.claude, Some(home.join(".claude")));
         assert_eq!(roots.antigravity, Some(home.join(".gemini").join("config")));
         assert_eq!(roots.open_code, Some(xdg_home.join("opencode")));
+        assert_eq!(roots.grok, Some(home.join(".grok")));
     }
 
     #[test]

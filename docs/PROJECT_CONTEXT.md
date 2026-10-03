@@ -1,5 +1,7 @@
 # Project context
 
+Grok extension, October 3, 2026: the user requested another built-in harness. Grok uses ID `grok` and `~/.grok/skills` on Windows and Linux, with the existing configuration-directory/override visibility rule and persisted destination overrides. Existing saved settings receive missing defaults in memory without being rewritten on load. The scan notice explains additional shared agent, Claude Code and Cursor discovery; only the configured destination is managed. [Official Grok skill locations](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md#skill-locations) were checked for this change. Windows frontend check/build, Rust fmt/clippy/tests/debug build and diff whitespace review passed, with 45 disposable tests including Grok visibility, override handling, no directory creation and old settings compatibility. Native Grok interaction and Linux execution of this change remain unvalidated. No new packages were generated.
+
 Current release, October 2, 2026: the user reported all final v0.1.1 installer tests passing and explicitly authorized publication. GitHub confirms v0.1.1 published at 2026-10-02T20:34:36Z with NSIS, deb, SHA256SUMS.txt and SOURCE_COMMIT.txt. Final installer acceptance is user-reported evidence without detailed logs. Public release: https://github.com/Thiagojm/ai-skill-manager-rs/releases/tag/v0.1.1. Earlier draft/pending checkpoints below are historical.
 
 

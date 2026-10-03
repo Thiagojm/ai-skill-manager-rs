@@ -13,7 +13,7 @@ use crate::settings::{self, Settings};
 static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
 
 pub type Harness = String;
-pub const BUILT_INS: [&str; 4] = ["codex", "claude", "antigravity", "open_code"];
+pub const BUILT_INS: [&str; 5] = ["codex", "claude", "antigravity", "open_code", "grok"];
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -386,6 +386,9 @@ pub(crate) fn scan_cached(
     }
     if harness == "open_code" {
         warnings.push("OpenCode also reads Claude Code and shared agent skill directories; this tab manages only its configured destination.".into());
+    }
+    if harness == "grok" {
+        warnings.push("Grok also reads shared agent skill directories and, by default, Claude Code and Cursor skill directories; this tab manages only its configured destination.".into());
     }
     let revision = format!(
         "scan-{:016x}",

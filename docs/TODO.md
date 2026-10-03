@@ -1,5 +1,10 @@
 # Work status
 
+## Grok built-in harness — October 3, 2026
+
+- The user requested Grok as another default harness. Implemented built-in ID `grok`, label Grok, and home-relative `~/.grok/skills`, reusing existing visibility, destination overrides, registry and guarded operations. Detection creates no directories. Existing settings gain the default in memory without automatic rewriting.
+- Windows frontend check/build, Rust clippy/tests/debug build passed, including 45 disposable tests covering Grok detection and old settings compatibility. Rust formatting and diff review are recorded in project context. Native Grok interaction remains pending user validation. Commit/push, packaging and release actions require separate authorization.
+
 Current release, October 2, 2026: the user reported all final v0.1.1 installer tests passing and explicitly authorized publication. GitHub confirms v0.1.1 published at 2026-10-02T20:34:36Z with NSIS, deb, SHA256SUMS.txt and SOURCE_COMMIT.txt. Final installer acceptance is user-reported evidence without detailed logs. Public release: https://github.com/Thiagojm/ai-skill-manager-rs/releases/tag/v0.1.1. Earlier draft/pending checkpoints below are historical.
 
 

@@ -1,5 +1,9 @@
 # Durable decisions
 
+## Grok built-in harness — October 3, 2026
+
+The user requested Grok as another default harness. Use stable ID `grok`, label Grok and the documented user-scoped `~/.grok/skills` destination, retaining existing detection and override behavior. Do not create configuration directories during discovery or manage Grok's bundled skills. Explain additional shared agent and Claude Code/Cursor discovery without claiming runtime isolation. Existing settings load missing built-in defaults in memory; no schema migration is required.
+
 ## Validated Ubuntu scope — October 2, 2026
 
 The user reported all native acceptance tests passing on Ubuntu 22.04 x64. Public documentation names that validated configuration; Ubuntu 24.04 and other distributions remain unvalidated. Record native results as user-reported evidence separately from Actions compilation/tests, package inspection and downloaded checksum verification. The lack of a 24.04 environment is a documented validation gap, not evidence of failure or approval to claim support there.

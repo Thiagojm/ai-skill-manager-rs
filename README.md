@@ -20,7 +20,7 @@ Managing skills across multiple AI tools usually means manual folder copying, gu
 
 ## ✨ Features
 
-- 🎯 **Multi-Agent Central Hub**: Dedicated tabs for **OpenAI Codex**, **Anthropic Claude Code**, **Google Antigravity IDE**, and **OpenCode**, each with independent destination folder configuration.
+- 🎯 **Multi-Agent Central Hub**: Dedicated tabs for **OpenAI Codex**, **Anthropic Claude Code**, **Google Antigravity IDE**, **OpenCode**, and **Grok**, each with independent destination folder configuration.
 - 🔍 **Deep Whole-Tree Comparison**: Compares full directory trees — including nested files, helper scripts, configuration assets, empty directories, and hidden resources.
 - 🛡️ **Safe & Non-Destructive Operations**:
   - **Verified Staging**: Prepares and validates replacements before changing the installed folder. If placement fails after recycling, the app reports recovery paths.
@@ -43,9 +43,12 @@ AI Skill Manager automatically resolves standard skill installation paths for po
 | **Anthropic Claude Code** | `~/.claude/skills` | ✅ Yes |
 | **Google Antigravity IDE** | `~/.gemini/config/skills` | ✅ Yes |
 | **OpenCode** | `~/.config/opencode/skills` *(respects `XDG_CONFIG_HOME`)* | ✅ Yes |
+| **Grok** | `~/.grok/skills` | ✅ Yes |
 
 > [!NOTE]
 > Custom destination paths and chosen themes are automatically saved and restored on subsequent launches.
+
+Grok can also discover shared agent, Claude Code, and Cursor skills. Its tab manages only the configured destination. See the [Grok skill locations](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md#skill-locations).
 
 Built-in tabs appear when their configuration folder or a saved destination exists. To manage another tool, select **Add harness**, enter a name, choose its existing skills folder, then click **Add harness**. The registration is saved locally and remains visible if that folder later becomes unavailable. Select a custom tab and use **Choose destination…** to repair its path or **Manage harness** to rename or remove it. Removing a registration only clears its saved name and path; it never deletes the skills folder or its contents.
 
