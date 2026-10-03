@@ -27,7 +27,7 @@ Managing skills across multiple AI tools usually means manual folder copying, gu
   - **System Trash Integration**: Uninstalled or replaced folders move to the Windows Recycle Bin or Ubuntu system trash. Recycling failures abort the affected operation without a permanent-delete fallback. Restore manually; the operating system controls retention.
   - **Link Protection**: Safeguards directory junctions and symbolic links without mutating external targets.
 - ⚡ **Parallel Scanning**: Up to four inventory workers and an in-memory source snapshot reduce repeated work when switching harnesses. Use **Refresh** after changing source files externally.
-- 🎨 **Modern & Accessible UI**: Clean dark and light modes, instant search by skill title or directory ID, status filtering, and keyboard navigation.
+- 🎨 **Modern & Accessible UI**: Clean dark and light modes, instant search, adaptive harness navigation, status filters, batch selection and keyboard controls.
 - 📂 **Folder Selection**: Native folder pickers or **Enter path…** with validated absolute paths. Custom harness folder paths can also be typed directly.
 - 🐧 **Linux File Permissions**: Ordinary file permission bits participate in comparison; copying preserves executable scripts. Directory permissions follow creation/umask; ownership, ACLs, and extended attributes are not managed.
 
@@ -83,7 +83,7 @@ Run inside the download directory:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS.txt
-sudo apt install './AI.Skill.Manager_0.1.1_amd64.deb'
+sudo apt install './AI.Skill.Manager_0.2.0_amd64.deb'
 ```
 
 Launch **AI Skill Manager** from your application menu. APT installs the declared runtime dependencies, including `xdg-utils`. The release includes both the Windows installer and Ubuntu package.
