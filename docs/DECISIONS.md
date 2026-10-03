@@ -1,5 +1,9 @@
 # Durable decisions
 
+## Usability extension direction — October 3, 2026
+
+The user selected all reviewed improvements, harness sidebar navigation and a top selector for smaller windows, then approved both the conversational design and [written specification](specs/2026-10-03-usability-performance-design.md). Preserve side-by-side list/details at the desktop minimum, disclose hidden selections without silently excluding them from operations, and retain existing whole-folder safety contracts. The [implementation plan](plans/2026-10-03-usability-performance-plan.md) retains separate phase gates; these approvals do not authorize implementation, commit/push or release actions.
+
 ## Grok built-in harness — October 3, 2026
 
 The user requested Grok as another default harness. Use stable ID `grok`, label Grok and the documented user-scoped `~/.grok/skills` destination, retaining existing detection and override behavior. Do not create configuration directories during discovery or manage Grok's bundled skills. Explain additional shared agent and Claude Code/Cursor discovery without claiming runtime isolation. Existing settings load missing built-in defaults in memory; no schema migration is required.

@@ -1,5 +1,10 @@
 # Work status
 
+## Usability and performance planning — October 3, 2026
+
+- The user selected all review recommendations, sidebar navigation, and a top harness selector for smaller windows, then approved both the conversational design and the [written specification](specs/2026-10-03-usability-performance-design.md). The [three-phase implementation plan](plans/2026-10-03-usability-performance-plan.md) is prepared and self-reviewed.
+- Phase 1 covers theme/freshness/indexing; Phase 2 covers navigation/layout/selection/accessibility; Phase 3 covers scan progress/differences/operation results. No phase is authorized or started; next is an explicit Phase 1 implementation request or a handoff request. Each phase stops for native user validation and explicit next-phase authorization; commit/push, packaging and publication remain gated. Only planning/context documents changed, with no implementation validation claim.
+
 ## Grok built-in harness — October 3, 2026
 
 - The user requested Grok as another default harness. Implemented built-in ID `grok`, label Grok, and home-relative `~/.grok/skills`, reusing existing visibility, destination overrides, registry and guarded operations. Detection creates no directories. Existing settings gain the default in memory without automatic rewriting.
