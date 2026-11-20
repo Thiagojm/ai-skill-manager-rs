@@ -1,5 +1,9 @@
 # Durable decisions
 
+## UX refinement direction — November 20, 2026
+
+The user approved the [UX refinement design](specs/2026-11-20-ux-refinement-design.md) with all four scopes. Tailwind stays installed per the accepted stack decision even though no utility classes are currently used. A narrow `open_source_folder` command mirrors `open_harness_folder` without frontend-supplied paths. The cross-harness overview is read-only: it never records a scan baseline, issues a revision or invalidates held scans/plans, and never authorizes operations. The [implementation plan](plans/2026-11-20-ux-refinement-plan.md) keeps separate phase gates.
+
 ## Usability extension direction — October 3, 2026
 
 The user selected all reviewed improvements, harness sidebar navigation and a top selector for smaller windows, then approved both the conversational design and [written specification](specs/2026-10-03-usability-performance-design.md). Preserve side-by-side list/details at the desktop minimum, disclose hidden selections without silently excluding them from operations, and retain existing whole-folder safety contracts. The [implementation plan](plans/2026-10-03-usability-performance-plan.md) retains separate phase gates; The user subsequently authorized planning commit/push and Phase 1, then accepted Phase 1 and authorized Phase 2 on October 3, 2026. The user subsequently accepted Phase 2 and authorized Phase 3 on October 3, 2026. Phase 3 uses the existing bounded workers and an optional Tauri channel; destination difference labels describe Update replacement. Result summaries count received result events, with preparation skips and command failures separate. On October 3, 2026, the user explicitly authorized the 0.2.0 version bump, commit/push and new release after accepting Phase 3.
