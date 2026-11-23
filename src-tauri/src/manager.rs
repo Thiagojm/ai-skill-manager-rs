@@ -78,6 +78,8 @@ pub struct ScanProgress {
     pub completed: usize,
     pub total: Option<usize>,
     pub reused_source: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
 }
 
 type ProgressSink<'a> = dyn Fn(ScanProgress) + Sync + 'a;
@@ -94,6 +96,7 @@ fn report(
         completed,
         total,
         reused_source,
+        harness: None,
     });
 }
 
@@ -211,6 +214,110 @@ pub(crate) fn scan_cached_progress(
     progress: &ProgressSink<'_>,
 ) -> Result<ScanResponse, String> {
     let started = std::time::Instant::now();
+    load_source(settings, cache, reuse_source, progress)?;
+    let mut response = compare_harness(settings, harness, cache, progress)?;
+    response.revision = format!(
+        "scan-{:016x}",
+        NEXT_REVISION.fetch_add(1, Ordering::Relaxed)
+    );
+    eprintln!(
+        "{} scan: {:?} (reuse source: {})",
+        settings::harness_label(settings, harness).unwrap_or(harness),
+        started.elapsed(),
+        reuse_source
+    );
+    Ok(response)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverviewResponse {
+    pub source_path: Option<PathBuf>,
+    pub generated_at: u64,
+    pub harnesses: Vec<OverviewHarness>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverviewHarness {
+    pub harness: Harness,
+    pub destination_path: Option<PathBuf>,
+    pub available: bool,
+    pub error: Option<String>,
+    pub counts: BTreeMap<String, usize>,
+    pub rows: Vec<OverviewRow>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverviewRow {
+    pub identity: String,
+    pub folder_name: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub status: String,
+}
+
+/// Read-only comparison of every given harness against one fresh source snapshot.
+/// Issues no revision, so it never affects prepared operations or the app's source cache.
+pub(crate) fn scan_overview(
+    settings: &Settings,
+    harnesses: &[Harness],
+    progress: &ProgressSink<'_>,
+) -> Result<OverviewResponse, String> {
+    let mut cache = SourceCache::default();
+    load_source(settings, &mut cache, false, progress)?;
+    let harnesses = harnesses
+        .iter()
+        .map(|harness| {
+            let label = settings::harness_label(settings, harness).unwrap_or(harness);
+            let tagged = |mut event: ScanProgress| {
+                event.harness = Some(label.to_string());
+                progress(event)
+            };
+            let destination_path =
+                settings::configured_destination(settings, harness).map(Path::to_path_buf);
+            let mut column = OverviewHarness {
+                harness: harness.clone(),
+                available: destination_path.as_deref().is_some_and(Path::is_dir),
+                destination_path,
+                error: None,
+                counts: BTreeMap::new(),
+                rows: Vec::new(),
+            };
+            match compare_harness(settings, harness, &cache, &tagged) {
+                Ok(response) => {
+                    for row in response.skills {
+                        *column.counts.entry(row.status.clone()).or_default() += 1;
+                        column.rows.push(OverviewRow {
+                            identity: identity_key(&row.folder_name),
+                            folder_name: row.folder_name,
+                            name: row.name,
+                            description: row.description,
+                            status: row.status,
+                        });
+                    }
+                }
+                Err(error) => column.error = Some(error),
+            }
+            column
+        })
+        .collect();
+    Ok(OverviewResponse {
+        source_path: settings.source.clone(),
+        generated_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |time| time.as_millis() as u64),
+        harnesses,
+    })
+}
+
+fn load_source(
+    settings: &Settings,
+    cache: &mut SourceCache,
+    reuse_source: bool,
+    progress: &ProgressSink<'_>,
+) -> Result<(), String> {
     if !reuse_source {
         *cache = SourceCache::default();
     }
@@ -221,18 +328,8 @@ pub(crate) fn scan_cached_progress(
             return Err(format!("Source folder is unavailable: {}", path.display()));
         }
     }
-    let destination = settings::configured_destination(settings, harness)
-        .map(Path::to_path_buf)
-        .ok_or_else(|| {
-            format!(
-                "No destination is configured for {}",
-                settings::harness_label(settings, harness).unwrap_or(harness)
-            )
-        })?;
     let resolved_source_path = source.as_deref().map(resolve_path).transpose()?;
-    let resolved_destination_path = resolve_path(&destination)?;
-    let mut warnings = Vec::new();
-    let cache_key = source.clone().zip(resolved_source_path.clone());
+    let cache_key = source.clone().zip(resolved_source_path);
     if !reuse_source || cache.parent != cache_key {
         // Clear before reading so a failed refresh cannot revive an older snapshot.
         *cache = SourceCache::default();
@@ -263,6 +360,29 @@ pub(crate) fn scan_cached_progress(
             true,
         );
     }
+    Ok(())
+}
+
+/// Compares one harness against an already loaded source snapshot. The revision is left
+/// empty; only `scan_cached_progress` issues one.
+fn compare_harness(
+    settings: &Settings,
+    harness: &str,
+    cache: &SourceCache,
+    progress: &ProgressSink<'_>,
+) -> Result<ScanResponse, String> {
+    let source = settings.source.clone();
+    let destination = settings::configured_destination(settings, harness)
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "No destination is configured for {}",
+                settings::harness_label(settings, harness).unwrap_or(harness)
+            )
+        })?;
+    let resolved_source_path = source.as_deref().map(resolve_path).transpose()?;
+    let resolved_destination_path = resolve_path(&destination)?;
+    let mut warnings = Vec::new();
     let mut source_skills = cache.skills.clone();
     report(progress, "discover_destination", 0, None, false);
     let mut installed = read_installed(&destination)?;
@@ -467,18 +587,8 @@ pub(crate) fn scan_cached_progress(
     if harness == "grok" {
         warnings.push("Grok also reads shared agent skill directories and, by default, Claude Code and Cursor skill directories; this tab manages only its configured destination.".into());
     }
-    let revision = format!(
-        "scan-{:016x}",
-        NEXT_REVISION.fetch_add(1, Ordering::Relaxed)
-    );
-    eprintln!(
-        "{} scan: {:?} (reuse source: {})",
-        settings::harness_label(settings, harness).unwrap_or(harness),
-        started.elapsed(),
-        reuse_source
-    );
     Ok(ScanResponse {
-        revision,
+        revision: String::new(),
         harness: harness.to_string(),
         source_path: source,
         destination_path: destination,
@@ -1846,6 +1956,110 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         link_dir(&root, &root.join("loop"));
         assert!(inventory(&root).unwrap_err().contains("cycle"));
+    }
+
+    #[test]
+    fn overview_matches_scan_reads_source_once_and_isolates_columns() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let codex = temp.path().join("codex");
+        skill(&source, "Same", "a");
+        skill(&source, "Changed", "new");
+        skill(&source, "Absent", "a");
+        skill(&codex, "Same", "a");
+        skill(&codex, "Changed", "old");
+        skill(&codex, "Extra", "a");
+        let not_a_folder = temp.path().join("file.txt");
+        file(&not_a_folder, b"x");
+        let settings = Settings {
+            source: Some(source),
+            destinations: [
+                ("codex".into(), codex),
+                ("claude".into(), temp.path().join("not-created")),
+                ("grok".into(), not_a_folder),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let events = std::sync::Mutex::new(Vec::new());
+        let harnesses: Vec<Harness> = ["codex", "claude", "grok", "open_code"]
+            .map(String::from)
+            .into();
+        let overview = scan_overview(&settings, &harnesses, &|event| {
+            events.lock().unwrap().push(event)
+        })
+        .unwrap();
+        let events = events.into_inner().unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.stage == "discover_source")
+                .count(),
+            1
+        );
+        assert!(events
+            .iter()
+            .filter(|event| event.stage == "discover_destination")
+            .all(|event| event.harness.is_some()));
+
+        let [codex, claude, grok, open_code] = &overview.harnesses[..] else {
+            panic!("expected four columns");
+        };
+        let scanned = scan(&settings, "codex").unwrap();
+        let statuses = |rows: &[OverviewRow]| {
+            rows.iter()
+                .map(|row| (row.folder_name.clone(), row.status.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            statuses(&codex.rows),
+            scanned
+                .skills
+                .iter()
+                .map(|row| (row.folder_name.clone(), row.status.clone()))
+                .collect::<Vec<_>>()
+        );
+        assert!(codex.available && codex.error.is_none());
+        assert_eq!(codex.counts["identical"], 1);
+        assert_eq!(codex.counts["different"], 1);
+        assert_eq!(codex.counts["missing"], 1);
+        assert_eq!(codex.counts["installed_only"], 1);
+        assert_eq!(
+            codex.rows[0].identity,
+            identity_key(&codex.rows[0].folder_name)
+        );
+
+        assert!(!claude.available && claude.error.is_none());
+        assert_eq!(claude.counts["missing"], 3);
+        assert!(!grok.available && grok.error.is_some() && grok.rows.is_empty());
+        assert!(open_code.destination_path.is_none() && open_code.error.is_some());
+    }
+
+    #[test]
+    fn overview_fails_when_configured_source_is_unavailable() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings = Settings {
+            source: Some(temp.path().join("gone")),
+            ..Default::default()
+        };
+        assert!(scan_overview(&settings, &["codex".into()], &|_| {}).is_err());
+    }
+
+    #[test]
+    fn progress_omits_harness_key_unless_tagged() {
+        let mut event = ScanProgress {
+            stage: "compare",
+            completed: 0,
+            total: None,
+            reused_source: false,
+            harness: None,
+        };
+        assert!(!serde_json::to_string(&event).unwrap().contains("harness"));
+        event.harness = Some("Codex".into());
+        assert!(serde_json::to_string(&event)
+            .unwrap()
+            .contains("\"harness\":\"Codex\""));
     }
 
     #[test]

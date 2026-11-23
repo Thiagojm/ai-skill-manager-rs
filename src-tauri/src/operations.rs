@@ -930,6 +930,41 @@ mod tests {
     }
 
     #[test]
+    fn overview_keeps_revisions_and_tokens_valid_and_shares_the_operation_guard() {
+        let _guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        skill(&source, "X", b"x");
+        let settings = Settings {
+            source: Some(source),
+            destinations: [("codex".into(), destination.clone())].into(),
+            ..Settings::default()
+        };
+        let harnesses = vec!["codex".to_string()];
+        let scan = manager::scan(&settings, "codex").unwrap();
+        record_scan(&scan, begin_scan());
+        manager::scan_overview(&settings, &harnesses, &|_| {}).unwrap();
+        let prepared = prepare_operation(
+            &settings,
+            "codex".into(),
+            &scan.revision,
+            OperationAction::Install,
+            &["X".into()],
+        )
+        .unwrap();
+        manager::scan_overview(&settings, &harnesses, &|_| {}).unwrap();
+        execute_operation(&prepared.token, &settings, false, |_| Ok(()), |_| {}).unwrap();
+        assert!(destination.join("X").is_dir());
+
+        // The overview command holds this guard for its whole read.
+        let held = acquire().unwrap();
+        assert!(acquire().is_err());
+        drop(held);
+        assert!(acquire().is_ok());
+    }
+
+    #[test]
     fn confirmation_metadata_warnings_are_unique_for_update_and_uninstall() {
         let _guard = test_lock();
         let temp = tempfile::tempdir().unwrap();

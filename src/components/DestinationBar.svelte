@@ -12,12 +12,15 @@
   export let onEnterPath: () => void
   export let onManage: () => void
   export let onOpen: () => void
+  export let overviewShown: boolean
+  export let onOverview: () => void
   import Icon from './Icon.svelte'
 </script>
 
 <div class="destination-bar">
   <div class="destination-label"><span class="eyebrow">Managed destination</span><details class="path-disclosure"><summary title={path}>{formatPath(path)}</summary><div class="path-full"><code>{formatPath(path)}</code>{#if path}<button class="icon-button icon-button-small" type="button" aria-label="Copy destination path" title="Copy path" onclick={onCopy}><Icon name="copy" size={14} /></button>{/if}</div></details></div>
   <div class="destination-actions">
+    <button class="button button-secondary" type="button" aria-pressed={overviewShown} onclick={onOverview} {disabled}>Overview</button>
     <button class="button button-secondary" type="button" onclick={onChoose} {disabled}>Choose destination…</button>
     <button class="button button-secondary" type="button" onclick={onOpen} {disabled}>Open folder</button>
     <MoreMenu label="More destination actions" items={[

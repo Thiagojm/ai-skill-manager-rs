@@ -129,6 +129,24 @@ footer { flex-shrink: 0; display: flex; justify-content: space-between; padding:
 .harness-list button { flex-shrink: 0; text-align: left; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); overflow-wrap: anywhere; cursor: pointer; font-size: 13px; }
 .harness-list button:hover { background: var(--panel-hover); }
 .harness-list button[aria-current="true"] { border-color: var(--border); background: var(--panel-raised); color: var(--accent); }
+.harness-list button { display: grid; gap: 2px; }
+.harness-summary { color: var(--faint); font-size: 12px; }
+
+/* Overview */
+.overview-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.overview-outdated { flex-shrink: 0; margin: 0 12px 8px; }
+.matrix-scroll { flex: 1; min-height: 0; overflow: auto; margin: 0 12px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.matrix { border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.matrix th, .matrix td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; background: var(--panel); }
+.matrix thead th { position: sticky; top: 0; z-index: 1; background: var(--panel-raised); color: var(--muted); font-weight: 650; }
+.matrix tbody th { position: sticky; left: 0; z-index: 1; max-width: 240px; overflow: hidden; text-overflow: ellipsis; border-right: 1px solid var(--border); font-weight: 400; }
+.matrix tbody th span { display: block; overflow: hidden; text-overflow: ellipsis; }
+.matrix thead th:first-child { left: 0; z-index: 2; border-right: 1px solid var(--border); }
+.matrix-column-state { display: block; color: var(--red); font-weight: 400; }
+.matrix-state { color: var(--faint); }
+.button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.matrix-cell { border: 0; cursor: pointer; font: inherit; }
+.matrix-cell:disabled { cursor: default; }
 .workspace-content { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .destination-bar { flex-shrink: 0; min-height: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel-raised); }
 .destination-actions { display: flex; flex-wrap: wrap; gap: 8px; }

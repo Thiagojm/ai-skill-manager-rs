@@ -12,17 +12,20 @@
   import AddHarnessDialog from './components/AddHarnessDialog.svelte'
   import ManageHarnessDialog from './components/ManageHarnessDialog.svelte'
   import OperationDialog from './components/OperationDialog.svelte'
+  import OverviewMatrix from './components/OverviewMatrix.svelte'
   import {
     loadSettings,
     saveSettings,
     openHarnessFolder,
     openSourceFolder,
     scanSkills,
+    scanOverview,
     prepareOperation,
     executeOperation,
     type OperationAction,
     type Harness,
     type HarnessDescriptor,
+    type OverviewResponse,
     type OperationEvent,
     type PrepareResponse,
     type ScanResponse,
@@ -53,6 +56,10 @@
   let operationStarted = false
   let operationSequence = 0
   let scanProgress: ScanProgress | null = null
+  let overview: OverviewResponse | null = null
+  let overviewOutdated = false
+  let overviewRunning = false
+  let showOverview = false
   let copyStatus = ''
   let copySequence = 0
   const stageLabels = { discover_source: 'Discovering source skills', source: 'Reading source skills', discover_destination: 'Discovering destination skills', destination: 'Reading destination skills', compare: 'Comparing skills' }
@@ -163,7 +170,57 @@
     }
     return counts
   }
-  $: controlsDisabled = loading || choosing || saving || operationPreparing || operationRunning
+  $: controlsDisabled = loading || choosing || saving || operationPreparing || operationRunning || overviewRunning
+
+  function markOverviewOutdated() { if (overview) overviewOutdated = true }
+
+  // A scan whose counts no longer match its overview column makes the overview outdated.
+  function compareWithOverview(response: ScanResponse) {
+    if (!overview) return
+    const column = overview.harnesses.find((item) => item.harness === response.harness)
+    const counts = countStatuses(response.skills)
+    delete counts.all
+    const same = column && !column.error && Object.keys({ ...counts, ...column.counts }).every((status) => (counts[status] ?? 0) === (column.counts[status] ?? 0))
+    if (!same) overviewOutdated = true
+  }
+
+  async function runOverview() {
+    if (controlsDisabled) return
+    overviewRunning = true
+    scanProgress = null
+    loadError = ''
+    try {
+      overview = await scanOverview((event) => { if (overviewRunning) scanProgress = event })
+      overviewOutdated = false
+    } catch (error) {
+      loadError = String(error)
+    } finally {
+      overviewRunning = false
+      scanProgress = null
+    }
+  }
+
+  async function toggleOverview() {
+    if (controlsDisabled) return
+    showOverview = !showOverview
+    if (showOverview && !overview) await runOverview()
+  }
+
+  async function openFromOverview(harness: Harness, folder: string) {
+    if (controlsDisabled) return
+    showOverview = false
+    if (harness === activeHarness) {
+      search = ''
+      statusFilter = 'all'
+      await refresh()
+    } else await switchHarness(harness)
+    if (activeHarness !== harness || !scan) return
+    if (scan.skills.some((skill) => skill.folderName === folder)) {
+      focusedFolder = folder
+      await tick()
+      ;[...document.querySelectorAll<HTMLElement>('.skill-summary')].find((element) => element.dataset.folder === folder)?.focus()
+    } else copyStatus = `${folder} is no longer listed under that name in ${labelFor(harness)}.`
+  }
   $: document.documentElement.dataset.theme = settings.theme
 
   onMount(async () => {
@@ -175,7 +232,7 @@
   })
 
   async function refresh(reuseSource = false, reloadRegistry = false) {
-    if (loading || operationRunning || operationPreparing) return
+    if (loading || operationRunning || operationPreparing || overviewRunning) return
     const sequence = ++scanSequence
     loading = true
     scanProgress = null
@@ -195,6 +252,7 @@
       if (sequence !== scanSequence) return
       scan = response
       stale = false
+      compareWithOverview(response)
       selections[harness] = selectionsFor(harness).filter((name) => response.skills.some((skill) => skill.folderName === name))
       if (!response.skills.some((skill) => skill.folderName === focusedFolder)) {
         focusedFolder = response.skills[0]?.folderName ?? ''
@@ -319,6 +377,7 @@
         return false
       }
       settingsError = ''
+      markOverviewOutdated()
       if (changed === 'source') selections = {}
       else if (changed === 'destination' && previousHarness) selections[previousHarness] = []
       focusedFolder = ''
@@ -400,6 +459,7 @@
         return
       }
       if (removed) selections[removed] = []
+      markOverviewOutdated()
       dialog.close()
       confirmRemoving = false
       focusedFolder = ''
@@ -499,6 +559,7 @@
     } catch (error) {
       operationError = String(error)
     } finally {
+      markOverviewOutdated()
       await refreshAfterOperation()
       operationRunning = false
     }
@@ -518,6 +579,7 @@
       if (sequence === scanSequence) {
         scan = response
         stale = false
+        compareWithOverview(response)
         focusedFolder = response.skills.some((skill) => skill.folderName === focusedFolder)
           ? focusedFolder
           : response.skills[0]?.folderName ?? ''
@@ -552,10 +614,10 @@
 
     <NoticeRegion {settingsError} {settingsFile} {stale} {loadError} />
     <p class="copy-status" role="status">{copyStatus}</p>
-    {#if loading}
+    {#if loading || overviewRunning}
       <div class="scan-progress" role="status" aria-live="polite">
         {#if !scanProgress || scanProgress.total === null}<span class="spinner" aria-hidden="true"></span>{/if}
-        <span>{scanProgress ? stageLabels[scanProgress.stage] : 'Starting scan'}{scanProgress?.total !== null && scanProgress ? ` (${scanProgress.completed}/${scanProgress.total})` : '…'}{scanProgress?.reusedSource ? ' — cached source reused' : ''}</span>
+        <span>{scanProgress?.harness ? `${scanProgress.harness}: ` : ''}{scanProgress ? stageLabels[scanProgress.stage] : overviewRunning ? 'Starting overview' : 'Starting scan'}{scanProgress?.total !== null && scanProgress ? ` (${scanProgress.completed}/${scanProgress.total})` : '…'}{scanProgress?.reusedSource ? ' — cached source reused' : ''}</span>
       </div>
     {/if}
     <section class="workspace" aria-label="Harness comparison">
@@ -567,13 +629,17 @@
           <div class="destination-actions"><button class="button button-primary" type="button" onclick={openAddDialog} disabled={controlsDisabled}><Icon name="plus" /> Add harness</button><button class="button button-secondary" type="button" onclick={() => refresh(false, true)} disabled={controlsDisabled}>Refresh</button></div>
         </div>
       {:else}
-      <HarnessNavigation {harnesses} {activeHarness} wide={wideNavigation} disabled={controlsDisabled} bind:element={harnessNavigation} onSwitch={switchHarness} onAdd={openAddDialog} />
+      <HarnessNavigation {harnesses} {activeHarness} {overview} outdated={overviewOutdated} wide={wideNavigation} disabled={controlsDisabled} bind:element={harnessNavigation} onSwitch={switchHarness} onAdd={openAddDialog} />
       <div class="workspace-content">
-      <DestinationBar path={destinationPath} descriptor={activeDescriptor} warnings={scan?.warnings ?? []} disabled={controlsDisabled} onCopy={() => copyPath(destinationPath, 'Destination path')} onChoose={chooseDestination} onEnterPath={() => enterPath('destination')} onManage={openManageDialog} onOpen={openDestination} />
+      <DestinationBar path={destinationPath} descriptor={activeDescriptor} warnings={scan?.warnings ?? []} disabled={controlsDisabled} onCopy={() => copyPath(destinationPath, 'Destination path')} onChoose={chooseDestination} onEnterPath={() => enterPath('destination')} onManage={openManageDialog} onOpen={openDestination} overviewShown={showOverview} onOverview={toggleOverview} />
+      {#if showOverview}
+        <OverviewMatrix {overview} {harnesses} {statuses} outdated={overviewOutdated} running={overviewRunning} disabled={controlsDisabled} onRefresh={runOverview} onOpen={openFromOverview} />
+      {:else}
       <div id="comparison-panel" class="comparison-panel" aria-label="Skills comparison">
         <SkillList {filteredSkills} {statuses} {statusCounts} bind:search bind:statusFilter bind:focusedFolder bind:searchInput {selectedNames} {selectedCount} {hiddenSelectedCount} {allFilteredSelected} {installSelectedCount} {updateSelectedCount} {uninstallSelectedCount} {stale} {loading} {controlsDisabled} hasScan={!!scan} needsSource={!settings.source && !(scan?.skills.length)} harnessLabel={labelFor(activeHarness)} onPrepare={prepareAction} onRefresh={() => refresh(false, true)} onChangeSelection={changeSelection} onToggle={toggleSelection} />
         <DetailsPane skill={focusedSkill} disabled={controlsDisabled || stale} onAction={prepareFocused} onCopy={(path) => copyPath(path, 'Difference path')} />
       </div>
+      {/if}
       </div>
       {/if}
     </section>

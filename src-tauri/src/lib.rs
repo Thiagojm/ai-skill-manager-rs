@@ -175,6 +175,36 @@ async fn scan_skills(
 }
 
 #[tauri::command]
+async fn scan_overview(
+    app: tauri::AppHandle,
+    on_progress: Option<tauri::ipc::JavaScriptChannelId>,
+    webview: tauri::Webview,
+) -> Result<manager::OverviewResponse, String> {
+    let on_progress = on_progress.map(|id| id.channel_on::<_, manager::ScanProgress>(webview));
+    tauri::async_runtime::spawn_blocking(move || {
+        // Held for the whole read so no operation can start partway through.
+        let _guard = operations::acquire()?;
+        let response = settings::load(&app);
+        if let Some(error) = response.error {
+            return Err(error);
+        }
+        let harnesses: Vec<_> = response
+            .harnesses
+            .into_iter()
+            .filter(|harness| harness.visible)
+            .map(|harness| harness.id)
+            .collect();
+        manager::scan_overview(&response.settings, &harnesses, &|event| {
+            if let Some(channel) = &on_progress {
+                let _ = channel.send(event);
+            }
+        })
+    })
+    .await
+    .map_err(|error| format!("Overview could not finish: {error}"))?
+}
+
+#[tauri::command]
 async fn prepare_operation(
     app: tauri::AppHandle,
     harness: manager::Harness,
@@ -226,6 +256,7 @@ pub fn run() {
             open_harness_folder,
             open_source_folder,
             scan_skills,
+            scan_overview,
             prepare_operation,
             execute_operation
         ])

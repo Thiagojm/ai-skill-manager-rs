@@ -55,6 +55,30 @@ export interface ScanProgress {
   completed: number
   total: number | null
   reusedSource: boolean
+  harness?: string
+}
+
+export interface OverviewRow {
+  identity: string
+  folderName: string
+  name: string | null
+  description: string | null
+  status: SkillRow['status']
+}
+
+export interface OverviewHarness {
+  harness: Harness
+  destinationPath: string | null
+  available: boolean
+  error: string | null
+  counts: Record<string, number>
+  rows: OverviewRow[]
+}
+
+export interface OverviewResponse {
+  sourcePath: string | null
+  generatedAt: number
+  harnesses: OverviewHarness[]
 }
 
 export interface ScanResponse {
@@ -98,6 +122,11 @@ export const scanSkills = (harness: Harness, reuseSource = false, onProgress?: (
   const channel = onProgress ? new Channel<ScanProgress>() : undefined
   if (channel && onProgress) channel.onmessage = onProgress
   return invoke<ScanResponse>('scan_skills', { harness, reuseSource, onProgress: channel ?? null })
+}
+export const scanOverview = (onProgress: (event: ScanProgress) => void) => {
+  const channel = new Channel<ScanProgress>()
+  channel.onmessage = onProgress
+  return invoke<OverviewResponse>('scan_overview', { onProgress: channel })
 }
 export const prepareOperation = (action: OperationAction, harness: Harness, revision: string, selected: string[]) =>
   invoke<PrepareResponse>('prepare_operation', { action, harness, revision, selected })

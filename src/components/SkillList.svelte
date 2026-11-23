@@ -90,7 +90,7 @@
       {#each filteredSkills as skill, index (skill.folderName)}
         <div class="skill-row" class:focused={focusedFolder === skill.folderName}>
           <input type="checkbox" checked={selectedNames.has(skill.folderName)} onchange={() => onToggle(skill)} aria-label="Select {skill.folderName}" disabled={controlsDisabled || stale} />
-          <button class="skill-summary" type="button" onclick={() => focusedFolder = skill.folderName} onkeydown={(event) => rowKey(event, skill, index)} onkeyup={(event) => rowKey(event, skill, index)} aria-keyshortcuts="ArrowUp ArrowDown Space" aria-label="Show details for {skill.folderName}">
+          <button class="skill-summary" type="button" data-folder={skill.folderName} onclick={() => focusedFolder = skill.folderName} onkeydown={(event) => rowKey(event, skill, index)} onkeyup={(event) => rowKey(event, skill, index)} aria-keyshortcuts="ArrowUp ArrowDown Space" aria-label="Show details for {skill.folderName}">
             <span class="skill-title">{skill.name || skill.folderName}</span>
             <span class="skill-folder">{skill.folderName}</span>
           </button>
