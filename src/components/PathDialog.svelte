@@ -8,7 +8,7 @@
   export let onSave: (event: SubmitEvent) => void
 </script>
 
-<dialog bind:this={dialog} class="operation-dialog management-dialog" aria-labelledby="path-title" oncancel={(event) => { if (saving) event.preventDefault() }}>
+<dialog bind:this={dialog} class="operation-dialog management-dialog" aria-labelledby="path-title" oncancel={(event) => { if (saving) event.preventDefault() }} onclose={() => { error = '' }}>
   <form onsubmit={onSave}>
     <div class="dialog-heading"><h2 id="path-title">Enter {kind} folder path</h2><p>Use an absolute path. Paths are literal; ~ and environment variables are not expanded.</p></div>
     <label class="management-field">Folder path<input bind:value autocomplete="off" required {disabled} /></label>

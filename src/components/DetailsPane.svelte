@@ -1,8 +1,10 @@
 <script lang="ts">
-  import type { SkillRow } from '../api'
+  import type { OperationAction, SkillRow } from '../api'
   import { differenceLabels, formatPath, statusLabel } from '../format'
 
   export let skill: SkillRow | null
+  export let disabled: boolean
+  export let onAction: (action: OperationAction) => void
   export let onCopy: (path: string) => void
 </script>
 
@@ -12,6 +14,11 @@
       <div><span class="eyebrow">Skill details</span><h2>{skill.name || skill.folderName}</h2></div>
       <span class="status status-{skill.status}"><i></i>{statusLabel(skill.status)}</span>
     </div>
+    {#if skill.eligibleActions.length}
+      <div class="detail-actions">
+        {#each skill.eligibleActions as action}<button class="button {action === 'uninstall' ? 'button-quiet' : 'button-secondary'}" type="button" onclick={() => onAction(action)} {disabled}>{action === 'install' ? 'Install' : action === 'update' ? 'Update' : 'Uninstall'} this skill</button>{/each}
+      </div>
+    {/if}
     {#if skill.description}<p class="description">{skill.description}</p>{/if}
     <dl class="path-list">
       <div><dt>Folder identity</dt><dd><code>{skill.folderName}</code></dd></div>

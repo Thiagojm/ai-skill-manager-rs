@@ -16,6 +16,7 @@
     loadSettings,
     saveSettings,
     openHarnessFolder,
+    openSourceFolder,
     scanSkills,
     prepareOperation,
     executeOperation,
@@ -35,6 +36,7 @@
   let settingsFile = ''
   let settingsError = ''
   let loadError = ''
+  let dialogError = ''
   let stale = false
   let scan: ScanResponse | null = null
   let activeHarness: Harness | null = null
@@ -71,6 +73,7 @@
     if (sequence === scanSequence && loading) scanProgress = event
   }
   let preparedInstall: PrepareResponse | null = null
+  let preparedFolder: string | null = null
   let acknowledgeLinks = false
   let installDialog: HTMLDialogElement
   let addDialog: HTMLDialogElement
@@ -98,11 +101,13 @@
     return counts
   }
 
-  function changeSelection(mode: 'filtered' | 'all' | 'hidden') {
+  function changeSelection(mode: 'filtered' | 'all' | 'hidden' | 'visible') {
     if (!activeHarness || controlsDisabled || stale) return
     selections[activeHarness] = mode === 'all' ? [] : mode === 'hidden'
       ? activeSelections.filter((name) => visibleNames.has(name))
-      : [...new Set([...activeSelections, ...visibleNames])]
+      : mode === 'visible'
+        ? activeSelections.filter((name) => !visibleNames.has(name))
+        : [...new Set([...activeSelections, ...visibleNames])]
   }
 
   onMount(() => {
@@ -137,6 +142,7 @@
   $: filteredSkills = (scan?.skills ?? []).filter((skill) => {
     const matchesSearch = !query || skill.folderName.toLocaleLowerCase().includes(query)
       || skill.name?.toLocaleLowerCase().includes(query)
+      || skill.description?.toLocaleLowerCase().includes(query)
     return matchesSearch && (statusFilter === 'all' || skill.status === statusFilter)
   })
   $: focusedSkill = rowsByFolder.get(focusedFolder) ?? null
@@ -235,7 +241,7 @@
     if (controlsDisabled || (kind === 'destination' && !activeHarness)) return
     pathKind = kind
     pathValue = (kind === 'source' ? settings.source : settings.destinations[activeHarness!]) ?? ''
-    loadError = ''
+    dialogError = ''
     pathDialog.showModal()
   }
 
@@ -246,7 +252,7 @@
     const next = pathKind === 'source'
       ? { ...settings, source: path }
       : { ...settings, destinations: { ...settings.destinations, [activeHarness!]: path } }
-    if (await persist(next, pathKind)) pathDialog.close()
+    if (await persist(next, pathKind, true)) pathDialog.close()
   }
 
   async function chooseSource() {
@@ -277,6 +283,16 @@
     }
   }
 
+  async function openSource() {
+    if (!settings.source || controlsDisabled) return
+    loadError = ''
+    try {
+      await openSourceFolder()
+    } catch (error) {
+      loadError = String(error)
+    }
+  }
+
   async function openDestination() {
     if (!activeHarness || controlsDisabled) return
     loadError = ''
@@ -287,14 +303,21 @@
     }
   }
 
-  async function persist(next: Settings, changed: 'source' | 'destination') {
+  async function persist(next: Settings, changed: 'source' | 'destination', fromDialog = false) {
     if (saving || operationPreparing || operationRunning) return
     saving = true
     loadError = ''
+    dialogError = ''
     try {
-      await saveSettings(next)
       const previousHarness = activeHarness
-      applySettingsResponse(await loadSettings())
+      try {
+        await saveSettings(next)
+        applySettingsResponse(await loadSettings())
+      } catch (error) {
+        if (!fromDialog) throw error
+        dialogError = String(error)
+        return false
+      }
       settingsError = ''
       if (changed === 'source') selections = {}
       else if (changed === 'destination' && previousHarness) selections[previousHarness] = []
@@ -311,7 +334,7 @@
 
   function openAddDialog() {
     if (controlsDisabled) return
-    loadError = ''
+    dialogError = ''
     addName = ''
     addDestination = ''
     addDialog.showModal()
@@ -323,7 +346,7 @@
     try {
       const selected = await open({ directory: true, multiple: false, title: 'Choose custom harness skills folder' })
       if (typeof selected === 'string') addDestination = selected
-    } catch (error) { loadError = String(error) }
+    } catch (error) { dialogError = String(error) }
     finally { choosing = false }
   }
 
@@ -340,7 +363,7 @@
 
   function openManageDialog() {
     if (!activeDescriptor || activeDescriptor.builtIn || controlsDisabled) return
-    loadError = ''
+    dialogError = ''
     renameValue = activeDescriptor.label
     confirmRemoving = false
     manageDialog.showModal()
@@ -365,11 +388,17 @@
     if (saving || operationPreparing || operationRunning) return
     saving = true
     loadError = ''
+    dialogError = ''
     try {
-      await saveSettings(next)
-      const response = await loadSettings()
-      if (response.error) throw new Error(response.error)
-      applySettingsResponse(response, preferred)
+      try {
+        await saveSettings(next)
+        const response = await loadSettings()
+        if (response.error) throw new Error(response.error)
+        applySettingsResponse(response, preferred)
+      } catch (error) {
+        dialogError = String(error)
+        return
+      }
       if (removed) selections[removed] = []
       dialog.close()
       confirmRemoving = false
@@ -377,8 +406,7 @@
       search = ''
       statusFilter = 'all'
       await refresh()
-    } catch (error) { loadError = String(error) }
-    finally { saving = false }
+    } finally { saving = false }
   }
 
   async function switchHarness(harness: Harness) {
@@ -419,13 +447,22 @@
     return harnesses.find((item) => item.id === harness)?.label ?? harness
   }
 
-  async function prepareAction(action: OperationAction) {
+  function prepareAction(action: OperationAction) {
     const eligibleCount = action === 'install' ? installSelectedCount : action === 'update' ? updateSelectedCount : uninstallSelectedCount
-    if (!activeHarness || !scan || !eligibleCount || stale || loading || controlsDisabled) return
+    if (activeHarness && eligibleCount) return prepare(action, selectionsFor(activeHarness), null)
+  }
+
+  function prepareFocused(action: OperationAction) {
+    if (focusedSkill?.eligibleActions.includes(action)) return prepare(action, [focusedSkill.folderName], focusedSkill.folderName)
+  }
+
+  async function prepare(action: OperationAction, selected: string[], single: string | null) {
+    if (!activeHarness || !scan || stale || loading || controlsDisabled) return
     operationPreparing = true
     operationError = ''
     try {
-      preparedInstall = await prepareOperation(action, activeHarness, scan.revision, selectionsFor(activeHarness))
+      preparedInstall = await prepareOperation(action, activeHarness, scan.revision, selected)
+      preparedFolder = single
       acknowledgeLinks = false
       operationSequence++
       operationEvents = []
@@ -454,7 +491,11 @@
         operationEvents = [...operationEvents, event]
         if (event.kind === 'progress') latestOperationProgress = event
       })
-      selections[activeHarness] = []
+      if (preparedFolder === null) selections[activeHarness] = []
+      else if (operationEvents.some((event) => event.kind === 'result' && event.success === true && event.folderName === preparedFolder)) {
+        const done = preparedFolder
+        selections[activeHarness] = selectionsFor(activeHarness).filter((name) => name !== done)
+      }
     } catch (error) {
       operationError = String(error)
     } finally {
@@ -506,7 +547,7 @@
   <TopBar theme={settings.theme} disabled={controlsDisabled} onToggleTheme={toggleTheme} />
 
   <main id="main">
-    <SourceToolbar source={settings.source} disabled={controlsDisabled} onCopy={() => copyPath(settings.source, 'Source path')} onChoose={chooseSource} onEnterPath={() => enterPath('source')} />
+    <SourceToolbar source={settings.source} disabled={controlsDisabled} onCopy={() => copyPath(settings.source, 'Source path')} onChoose={chooseSource} onEnterPath={() => enterPath('source')} onOpen={openSource} />
 
     <NoticeRegion {settingsError} {settingsFile} {stale} {loadError} />
     <p class="copy-status" role="status">{copyStatus}</p>
@@ -530,7 +571,7 @@
       <DestinationBar path={destinationPath} descriptor={activeDescriptor} warnings={scan?.warnings ?? []} disabled={controlsDisabled} onCopy={() => copyPath(destinationPath, 'Destination path')} onChoose={chooseDestination} onEnterPath={() => enterPath('destination')} onManage={openManageDialog} onOpen={openDestination} />
       <div id="comparison-panel" class="comparison-panel" aria-label="Skills comparison">
         <SkillList {filteredSkills} {statuses} {statusCounts} bind:search bind:statusFilter bind:focusedFolder bind:searchInput {selectedNames} {selectedCount} {hiddenSelectedCount} {allFilteredSelected} {installSelectedCount} {updateSelectedCount} {uninstallSelectedCount} {stale} {loading} {controlsDisabled} hasScan={!!scan} needsSource={!settings.source && !(scan?.skills.length)} harnessLabel={labelFor(activeHarness)} onPrepare={prepareAction} onRefresh={() => refresh(false, true)} onChangeSelection={changeSelection} onToggle={toggleSelection} />
-        <DetailsPane skill={focusedSkill} onCopy={(path) => copyPath(path, 'Difference path')} />
+        <DetailsPane skill={focusedSkill} disabled={controlsDisabled || stale} onAction={prepareFocused} onCopy={(path) => copyPath(path, 'Difference path')} />
       </div>
       </div>
       {/if}
@@ -538,8 +579,8 @@
     <footer><span>Local skill folder manager</span><span>Files and scripts stay on this device</span></footer>
   </main>
 
-  <PathDialog bind:dialog={pathDialog} kind={pathKind} bind:value={pathValue} error={loadError} {saving} disabled={controlsDisabled} onSave={savePath} />
-  <AddHarnessDialog bind:dialog={addDialog} bind:name={addName} bind:destination={addDestination} error={loadError} busy={saving || choosing} disabled={controlsDisabled} onChooseFolder={chooseCustomFolder} onAdd={addHarness} />
-  <ManageHarnessDialog bind:dialog={manageDialog} label={activeDescriptor?.label} bind:name={renameValue} bind:confirmRemoving error={loadError} {saving} disabled={controlsDisabled} onRename={renameHarness} onRemove={removeHarness} />
+  <PathDialog bind:dialog={pathDialog} kind={pathKind} bind:value={pathValue} bind:error={dialogError} {saving} disabled={controlsDisabled} onSave={savePath} />
+  <AddHarnessDialog bind:dialog={addDialog} bind:name={addName} bind:destination={addDestination} bind:error={dialogError} busy={saving || choosing} disabled={controlsDisabled} onChooseFolder={chooseCustomFolder} onAdd={addHarness} />
+  <ManageHarnessDialog bind:dialog={manageDialog} label={activeDescriptor?.label} bind:name={renameValue} bind:confirmRemoving bind:error={dialogError} {saving} disabled={controlsDisabled} onRename={renameHarness} onRemove={removeHarness} />
   <OperationDialog bind:dialog={installDialog} bind:prepared={preparedInstall} bind:acknowledgeLinks events={operationEvents} latestProgress={latestOperationProgress} started={operationStarted} running={operationRunning} error={operationError} onRun={runOperation} onClose={closeInstallDialog} />
 </div>

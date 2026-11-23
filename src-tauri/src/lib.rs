@@ -33,11 +33,32 @@ fn open_harness_folder(app: tauri::AppHandle, harness: manager::Harness) -> Resu
         .ok_or_else(|| "Unknown harness identity".to_string())?;
     let path = settings::configured_destination(&response.settings, &harness)
         .ok_or_else(|| format!("{label} destination is not configured"))?;
-    let target = folder_target(path)?;
+    open_folder(&folder_target(path, "Harness destination")?)
+}
+
+#[tauri::command]
+fn open_source_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let _guard = operations::acquire()?;
+    let response = settings::load(&app);
+    if let Some(error) = response.error {
+        return Err(error);
+    }
+    open_folder(&source_folder_target(&response.settings)?)
+}
+
+fn source_folder_target(settings: &settings::Settings) -> Result<PathBuf, String> {
+    let path = settings
+        .source
+        .as_deref()
+        .ok_or_else(|| "Skill library folder is not configured".to_string())?;
+    folder_target(path, "Skill library folder")
+}
+
+fn open_folder(target: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
         std::process::Command::new("explorer.exe")
-            .arg(&target)
+            .arg(target)
             .spawn()
             .map(|_| ())
             .map_err(|error| {
@@ -49,7 +70,7 @@ fn open_harness_folder(app: tauri::AppHandle, harness: manager::Harness) -> Resu
     }
     #[cfg(target_os = "linux")]
     {
-        open_linux_folder(&target, "xdg-open")
+        open_linux_folder(target, "xdg-open")
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
@@ -76,25 +97,15 @@ fn open_linux_folder(target: &Path, program: impl AsRef<std::ffi::OsStr>) -> Res
     }
 }
 
-fn folder_target(path: &Path) -> Result<PathBuf, String> {
-    let target = path.canonicalize().map_err(|error| {
-        format!(
-            "Harness destination is unavailable: {}: {error}",
-            path.display()
-        )
-    })?;
+fn folder_target(path: &Path, subject: &str) -> Result<PathBuf, String> {
+    let target = path
+        .canonicalize()
+        .map_err(|error| format!("{subject} is unavailable: {}: {error}", path.display()))?;
     if !target.is_dir() {
-        return Err(format!(
-            "Harness destination is not a directory: {}",
-            path.display()
-        ));
+        return Err(format!("{subject} is not a directory: {}", path.display()));
     }
-    fs::read_dir(&target).map_err(|error| {
-        format!(
-            "Harness destination is not accessible: {}: {error}",
-            path.display()
-        )
-    })?;
+    fs::read_dir(&target)
+        .map_err(|error| format!("{subject} is not accessible: {}: {error}", path.display()))?;
     Ok(normalize_explorer_target(target))
 }
 
@@ -213,6 +224,7 @@ pub fn run() {
             load_settings,
             save_settings,
             open_harness_folder,
+            open_source_folder,
             scan_skills,
             prepare_operation,
             execute_operation
@@ -239,7 +251,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let folder = root.path().join("skills folder; $(literal)");
         fs::create_dir(&folder).unwrap();
-        let target = folder_target(&folder).unwrap();
+        let target = source_folder_target(&settings::Settings {
+            source: Some(folder),
+            ..Default::default()
+        })
+        .unwrap();
         let opener = root.path().join("opener");
         fs::write(
             &opener,
@@ -266,17 +282,52 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let folder = root.path().join("skills folder");
         fs::create_dir(&folder).unwrap();
-        let target = folder_target(&folder).unwrap();
+        let target = folder_target(&folder, "Harness destination").unwrap();
         assert!(target.is_dir());
         assert!(target.to_string_lossy().contains("skills folder"));
 
         let missing = root.path().join("missing");
-        assert!(folder_target(&missing).unwrap_err().contains("unavailable"));
+        assert!(folder_target(&missing, "Harness destination")
+            .unwrap_err()
+            .starts_with("Harness destination is unavailable: "));
         let file = root.path().join("file");
         fs::write(&file, "content").unwrap();
-        assert!(folder_target(&file)
-            .unwrap_err()
-            .contains("not a directory"));
+        assert_eq!(
+            folder_target(&file, "Harness destination").unwrap_err(),
+            format!("Harness destination is not a directory: {}", file.display())
+        );
+    }
+
+    #[test]
+    fn source_folder_target_reports_source_specific_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let source = |path: Option<PathBuf>| settings::Settings {
+            source: path,
+            ..Default::default()
+        };
+        assert_eq!(
+            source_folder_target(&source(None)).unwrap_err(),
+            "Skill library folder is not configured"
+        );
+        assert!(
+            source_folder_target(&source(Some(root.path().join("missing"))))
+                .unwrap_err()
+                .starts_with("Skill library folder is unavailable: ")
+        );
+        let file = root.path().join("file");
+        fs::write(&file, "content").unwrap();
+        assert_eq!(
+            source_folder_target(&source(Some(file.clone()))).unwrap_err(),
+            format!(
+                "Skill library folder is not a directory: {}",
+                file.display()
+            )
+        );
+        let folder = root.path().join("library");
+        fs::create_dir(&folder).unwrap();
+        assert!(source_folder_target(&source(Some(folder)))
+            .unwrap()
+            .is_dir());
     }
 
     #[cfg(windows)]

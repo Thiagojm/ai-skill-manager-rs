@@ -93,6 +93,7 @@ export interface OperationEvent {
 export const loadSettings = () => invoke<SettingsResponse>('load_settings')
 export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings })
 export const openHarnessFolder = (harness: Harness) => invoke<void>('open_harness_folder', { harness })
+export const openSourceFolder = () => invoke<void>('open_source_folder')
 export const scanSkills = (harness: Harness, reuseSource = false, onProgress?: (event: ScanProgress) => void) => {
   const channel = onProgress ? new Channel<ScanProgress>() : undefined
   if (channel && onProgress) channel.onmessage = onProgress

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { HarnessDescriptor } from '../api'
   import { formatPath } from '../format'
+  import MoreMenu from './MoreMenu.svelte'
 
   export let path: string | null | undefined
   export let descriptor: HarnessDescriptor | undefined
@@ -16,11 +17,13 @@
 <div class="destination-bar">
   <div class="destination-label"><span class="eyebrow">Managed destination</span><details class="path-disclosure"><summary title={path}>{formatPath(path)}</summary><code>{formatPath(path)}</code></details></div>
   <div class="destination-actions">
-    <button class="button button-secondary" type="button" onclick={onCopy} disabled={!path}>Copy destination path</button>
     <button class="button button-secondary" type="button" onclick={onChoose} {disabled}>Choose destination…</button>
-    <button class="button button-secondary" type="button" onclick={onEnterPath} {disabled}>Enter path…</button>
-    {#if !descriptor?.builtIn}<button class="button button-secondary" type="button" onclick={onManage} {disabled}>Manage harness</button>{/if}
     <button class="button button-secondary" type="button" onclick={onOpen} {disabled}>Open folder</button>
+    <MoreMenu label="More destination actions" items={[
+      { label: 'Enter path…', disabled, onSelect: onEnterPath },
+      { label: 'Copy path', disabled: !path, onSelect: onCopy },
+      ...(descriptor?.builtIn ? [] : [{ label: 'Manage harness…', disabled, onSelect: onManage }]),
+    ]} />
   </div>
 </div>
 
