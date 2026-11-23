@@ -5,6 +5,7 @@
   export let theme: Theme
   export let disabled: boolean
   export let onToggleTheme: () => void
+  import Icon from './Icon.svelte'
 </script>
 
 <header class="topbar">
@@ -15,7 +16,7 @@
   <div class="topbar-actions">
     <span class="local-indicator"><i></i> Local workspace</span>
     <button class="icon-button" type="button" onclick={onToggleTheme} {disabled} aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} title="Change theme">
-      {#if theme === 'dark'}☼{:else}☾{/if}
+      <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
     </button>
   </div>
 </header>

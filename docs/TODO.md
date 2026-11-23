@@ -19,6 +19,34 @@
   - **Mocked browser, interactions:** header checkbox in all three states; hint and Install styling; a details action sends exactly one folder and keeps the selection, cancel keeps it, a failed item or rejected command keeps it, success removes only that folder, and batches still clear all; both More menus by keyboard and pointer (arrows wrap, Escape, outside click, Tab, focus return); source Open folder calls `open_source_folder` and its error appears in the main notice; description search; row arrows and Space; chips hide zero counts but keep the active filter; Manage… appears only for custom harnesses; Enter renames and adds; a failed registry or path save shows one dialog error and no main notice, and reopening clears it; a successful path save followed by a failed scan closes the dialog and shows one main notice.
   - **Mocked browser, screenshots:** both themes at 920×620, 1100×780, 1101×780, 1180×780 and 1600×1000, every state and dialog; inspected for overflow and layout.
   - **Native:** none yet. Check both More menus, Open folder for the skill library in Explorer, and per-skill actions in the desktop app.
+- Phase 2 is committed and pushed as `9362a22`. While checking it, the action hint was found to wrap the action row at 920 px; it now truncates with an ellipsis and has a `title`.
+- Phase 3 (visual clarity and accessibility) is implemented:
+  - **Contrast.** Token changes:
+    - Dark: `--faint` #89939e, `--accent-strong` #3473ce.
+    - Light: `--faint` #656e78, `--accent` #2c69b8, `--green` #157a53, `--amber` #975f0c, `--red` #b33d3d.
+    - Primary button hover is #1f5ca6 (darker instead of lighter).
+    - The error notice icon uses `var(--panel)` on red.
+  - **Installed only** uses a new `--violet` token (#b79cff dark, #7659c2 light); Different stays amber.
+  - **Type scale.** Base text for buttons, menus, notices, the details body and dialogs is 13 px; eyebrows, chips, paths and hints stay at 12 px.
+  - **Icons.** `Icon.svelte` renders inline SVGs and replaces every Unicode glyph used as an icon. The link arrow stays `aria-hidden`, followed by an sr-only "links to".
+  - **Path disclosures** have a compact Copy icon button ("Copy skill library path" / "Copy destination path").
+  - **Differences** are grouped as added, changed, type changed, removed, each with a heading and count. Each row has an icon button labelled "Copy path {path}".
+- Phase 3 copy changes (old → new):
+  - Differences: "Update replaces the complete destination folder, including removal of destination-only entries. This does not preview Uninstall. Copies materialize links, so linked sources can remain Different." → "Update replaces the whole folder in the destination. Files that exist only in the destination will be removed. This list does not preview Uninstall. Linked files are copied as normal files, so this skill may still show as Different after updating."
+  - Links: "Copies replace links with ordinary files and folders. A linked source can remain Different after Install or Update because entry types differ, even when content matches." → "Links are copied as normal files and folders. Because the entry type changes, this skill may still show as Different after Install or Update, even when the content matches."
+  - Acknowledgement: "I reviewed the listed links and junctions. Copies materialize linked content; recycling removes link entries while preserving their targets." → "I reviewed the listed links and junctions. Their contents will be copied as normal files. Moving to the trash removes only the link itself, not the folder or file it points to."
+  - Recovery: "The operating system controls trash retention. Restore items manually from the system trash; external harnesses may need a refresh or restart." → "Items stay in the system trash for as long as your operating system keeps them; restore them from there if needed. Other harness apps may need a refresh or restart to notice the change."
+- Phase 3 evidence, November 23, 2026:
+  - **Automated:** check, build, fmt, clippy, `cargo test` (52 passed), `cargo build` and `git diff --check` passed. No Rust changes.
+  - **Contrast script:** 35 text/background pairs per theme, covering tokens on every surface, the focused row, tinted chips, notices, warnings, the danger button and the primary button. Every pair is at least 4.5:1. The minimum is 4.65:1 in dark and 4.60:1 in light. The primary button is 4.68:1 (dark) and 5.67:1 (light) at rest, and 6.69:1 on hover in both themes.
+  - **Mocked browser:**
+    - No Unicode icon glyphs remain, and all 13 SVGs are `aria-hidden`.
+    - 60 differences render in four groups with correct counts, and the list scrolls inside its region.
+    - Labels are "Copy path {path}" and "Copy destination path".
+    - The new sr-only text initially caused vertical page overflow; the details pane is now `position: relative`.
+    - An iframe sweep of 120 combinations found no page overflow: 12 states × 5 sizes (920×620, 1100/1101×780, 1180×780, 1600×1000) × 2 themes.
+    - Screenshots of all of them were inspected.
+  - **Native:** none yet. Review both themes on Windows and Ubuntu, especially icon rendering and readability at the minimum window size.
 
 Release 0.2.0, October 3, 2026: the user accepted Phase 3 and authorized version bump, commit/push and a new release. Version 0.2.0 is published after the user explicitly authorized versioning, commit/push and release. CI run 37138956373 passed on Windows 2022 and Ubuntu 22.04. Packages run 37152732602 passed both NSIS and amd64 deb generation plus Debian inspection at source commit `8b484638cd761892f07b6a964afe10f4086adc75`. Downloaded workflow artifacts matched their checksums, as did all GitHub release downloads. Final Windows SHA-256: `3e9d6b2cf8b2e7513557fadac4f4dd61acc921d51847fa56ef6a32d168428c68`; Ubuntu SHA-256: `83b636ebcc8c22e7c8254408ee8780bac8259424cfe2961216f17a0c389ebe50`. GitHub normalizes spaces in uploaded filenames to periods; the published `SHA256SUMS.txt` uses those downloadable filenames and was re-downloaded and verified. The release is public at https://github.com/Thiagojm/ai-skill-manager-rs/releases/tag/v0.2.0 (published October 3, 2026). The user reported native testing of Phase 3 in the development app; installation and use of these exact 0.2.0 package downloads have not been separately reported.
  See [release notes](releases/v0.2.0.md).

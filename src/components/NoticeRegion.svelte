@@ -3,6 +3,7 @@
   export let settingsFile: string
   export let stale: boolean
   export let loadError: string
+  import Icon from './Icon.svelte'
 </script>
 
 {#if settingsError || stale || loadError}
@@ -10,7 +11,7 @@
 <div class="notice-region" role="region" aria-label="Application notices" tabindex="0">
 {#if settingsError}
   <div class="notice notice-error" role="alert">
-    <span class="notice-icon" aria-hidden="true">!</span>
+    <span class="notice-icon"><Icon name="alert" size={12} /></span>
     <span>{settingsError}<small>Settings file: {settingsFile || 'unavailable'}</small></span>
   </div>
 {/if}
@@ -19,7 +20,7 @@
 {/if}
 {#if loadError}
   <div class="notice notice-error" role="alert">
-    <span class="notice-icon" aria-hidden="true">!</span><span>{loadError}</span>
+    <span class="notice-icon"><Icon name="alert" size={12} /></span><span>{loadError}</span>
   </div>
 {/if}
 

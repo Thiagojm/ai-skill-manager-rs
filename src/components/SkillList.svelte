@@ -49,6 +49,7 @@
     const rows = (event.currentTarget as HTMLElement).closest('.skill-list')?.querySelectorAll<HTMLElement>('.skill-summary')
     rows?.[target]?.focus()
   }
+  import Icon from './Icon.svelte'
 </script>
 
 <div class="list-pane">
@@ -59,11 +60,11 @@
       <button class="button {installSelectedCount ? 'button-primary' : 'button-secondary'} install-button" type="button" onclick={() => onPrepare('install')} disabled={!installSelectedCount || stale || loading || controlsDisabled} aria-label="Review selected skills for installation">Install{installSelectedCount ? ` (${installSelectedCount})` : ''}</button>
       <button class="button button-secondary install-button" type="button" onclick={() => onPrepare('update')} disabled={!updateSelectedCount || stale || loading || controlsDisabled} aria-label="Review selected skills for update">Update{updateSelectedCount ? ` (${updateSelectedCount})` : ''}</button>
       <button class="button button-quiet install-button" type="button" onclick={() => onPrepare('uninstall')} disabled={!uninstallSelectedCount || stale || loading || controlsDisabled} aria-label="Review selected skills for uninstallation">Uninstall{uninstallSelectedCount ? ` (${uninstallSelectedCount})` : ''}</button>
-      <button class="button button-quiet" type="button" onclick={onRefresh} disabled={loading || controlsDisabled} aria-label="Refresh comparison">↻ <span>Refresh</span></button>
+      <button class="button button-quiet" type="button" onclick={onRefresh} disabled={loading || controlsDisabled} aria-label="Refresh comparison"><Icon name="refresh" /> <span>Refresh</span></button>
     </div>
   </div>
   <div class="filters">
-    <label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Search skills</span><input bind:this={searchInput} bind:value={search} placeholder="Search skills…" /></label><span class="result-count">{filteredSkills.length} {filteredSkills.length === 1 ? 'result' : 'results'}</span>
+    <label class="search-field"><Icon name="search" /><span class="sr-only">Search skills</span><input bind:this={searchInput} bind:value={search} placeholder="Search skills…" /></label><span class="result-count">{filteredSkills.length} {filteredSkills.length === 1 ? 'result' : 'results'}</span>
   </div>
   <div class="status-filters" aria-label="Filter by status">
     {#each statuses.filter((status) => status === 'all' || status === statusFilter || statusCounts[status]) as status}
@@ -80,9 +81,9 @@
   {#if loading && !hasScan}
     <div class="empty-state"><p>Scanning folders…</p></div>
   {:else if needsSource}
-    <div class="empty-state"><span class="empty-icon" aria-hidden="true">▧</span><h3>Choose a skill library</h3><p>Select a folder to compare its skills with {harnessLabel}.</p></div>
+    <div class="empty-state"><span class="empty-icon"><Icon name="folder" size={20} /></span><h3>Choose a skill library</h3><p>Select a folder to compare its skills with {harnessLabel}.</p></div>
   {:else if filteredSkills.length === 0}
-    <div class="empty-state"><span class="empty-icon" aria-hidden="true">⌕</span><h3>No skills found</h3><p>Try another search or check the selected folders.</p></div>
+    <div class="empty-state"><span class="empty-icon"><Icon name="search" size={20} /></span><h3>No skills found</h3><p>Try another search or check the selected folders.</p></div>
   {:else}
     <label class="select-visible"><input type="checkbox" checked={headerChecked} use:indeterminate={visibleSelected > 0 && !headerChecked} onclick={() => onChangeSelection(headerChecked ? 'visible' : 'filtered')} disabled={controlsDisabled || stale} /> Select all visible skills</label>
     <div class="skill-list" aria-label="Comparison results">

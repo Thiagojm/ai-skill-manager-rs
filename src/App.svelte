@@ -536,6 +536,7 @@
     if (!operationRunning && installDialog?.open) installDialog.close()
     if (!operationRunning) preparedInstall = null
   }
+  import Icon from './components/Icon.svelte'
 </script>
 
 <svelte:head>
@@ -560,10 +561,10 @@
     <section class="workspace" aria-label="Harness comparison">
       {#if !activeHarness}
         <div class="no-harness-state">
-          <span class="empty-icon" aria-hidden="true">▧</span>
+          <span class="empty-icon"><Icon name="empty" size={20} /></span>
           <h2>No configured harnesses found</h2>
           <p>No built-in harness configuration was detected. Add a custom skills folder or refresh.</p>
-          <div class="destination-actions"><button class="button button-primary" type="button" onclick={openAddDialog} disabled={controlsDisabled}>＋ Add harness</button><button class="button button-secondary" type="button" onclick={() => refresh(false, true)} disabled={controlsDisabled}>Refresh</button></div>
+          <div class="destination-actions"><button class="button button-primary" type="button" onclick={openAddDialog} disabled={controlsDisabled}><Icon name="plus" /> Add harness</button><button class="button button-secondary" type="button" onclick={() => refresh(false, true)} disabled={controlsDisabled}>Refresh</button></div>
         </div>
       {:else}
       <HarnessNavigation {harnesses} {activeHarness} wide={wideNavigation} disabled={controlsDisabled} bind:element={harnessNavigation} onSwitch={switchHarness} onAdd={openAddDialog} />

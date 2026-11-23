@@ -8,6 +8,7 @@
   export let element: HTMLElement
   export let onSwitch: (harness: Harness) => void
   export let onAdd: () => void
+  import Icon from './Icon.svelte'
 </script>
 
 <nav class="harness-navigation" bind:this={element} aria-label="Harness destinations">
@@ -23,5 +24,5 @@
       {#each harnesses as harness (harness.id)}<option value={harness.id}>{harness.label}</option>{/each}
     </select></label>
   {/if}
-  <button class="button button-secondary" type="button" onclick={onAdd} {disabled}>＋ Add harness</button>
+  <button class="button button-secondary" type="button" onclick={onAdd} {disabled}><Icon name="plus" /> Add harness</button>
 </nav>

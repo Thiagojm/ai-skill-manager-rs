@@ -2,10 +2,13 @@
   import type { OperationAction, SkillRow } from '../api'
   import { differenceLabels, formatPath, statusLabel } from '../format'
 
+  const differenceKinds = ['added', 'changed', 'type_changed', 'removed'] as const
+
   export let skill: SkillRow | null
   export let disabled: boolean
   export let onAction: (action: OperationAction) => void
   export let onCopy: (path: string) => void
+  import Icon from './Icon.svelte'
 </script>
 
 <aside class="details-pane" aria-label="Skill details">
@@ -33,19 +36,24 @@
     {/if}
     {#if skill.linkWarnings.length}
       <div class="detail-warning link-list"><strong>Links and junctions</strong>
-        <p>Copies replace links with ordinary files and folders. A linked source can remain Different after Install or Update because entry types differ, even when content matches.</p>
-        {#each skill.linkWarnings as link}<p><code>{link.path}</code><span>→</span><code>{link.target}</code></p>{/each}
+        <p>Links are copied as normal files and folders. Because the entry type changes, this skill may still show as Different after Install or Update, even when the content matches.</p>
+        {#each skill.linkWarnings as link}<p><code>{link.path}</code><span aria-hidden="true">→</span><span class="sr-only">links to</span><code>{link.target}</code></p>{/each}
       </div>
     {/if}
     {#if skill.differences.length}
       <div class="differences"><div class="section-heading"><strong>Update destination differences</strong><span>{skill.differences.length}</span></div>
-        <p>Update replaces the complete destination folder, including removal of destination-only entries. This does not preview Uninstall. Copies materialize links, so linked sources can remain Different.</p>
-        <ul>{#each skill.differences as difference}<li><span class="diff-kind diff-{difference.kind}">{differenceLabels[difference.kind]}</span><code>{difference.path}</code><button class="button button-secondary copy-difference" type="button" aria-label={`Copy difference path ${difference.path}`} onclick={() => onCopy(difference.path)}>Copy</button></li>{/each}</ul>
+        <p>Update replaces the whole folder in the destination. Files that exist only in the destination will be removed. This list does not preview Uninstall. Linked files are copied as normal files, so this skill may still show as Different after updating.</p>
+        <div class="diff-list">
+          {#each differenceKinds as kind}{@const items = skill.differences.filter((difference) => difference.kind === kind)}{#if items.length}
+            <h3 class="diff-kind diff-{kind}">{differenceLabels[kind]} <span>{items.length}</span></h3>
+            <ul>{#each items as difference}<li><code>{difference.path}</code><button class="icon-button icon-button-small" type="button" aria-label={`Copy path ${difference.path}`} title="Copy path" onclick={() => onCopy(difference.path)}><Icon name="copy" size={14} /></button></li>{/each}</ul>
+          {/if}{/each}
+        </div>
       </div>
     {:else if skill.status === 'identical'}
-      <div class="identical-note"><span aria-hidden="true">✓</span> Complete folder trees match</div>
+      <div class="identical-note"><Icon name="check" /> Complete folder trees match</div>
     {/if}
   {:else}
-    <div class="details-empty"><span class="empty-icon" aria-hidden="true">⌑</span><h3>Skill details</h3><p>Select a skill row to see its paths, warnings, and file-level differences.</p></div>
+    <div class="details-empty"><span class="empty-icon"><Icon name="info" size={20} /></span><h3>Skill details</h3><p>Select a skill row to see its paths, warnings, and file-level differences.</p></div>
   {/if}
 </aside>

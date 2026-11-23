@@ -21,7 +21,7 @@
       <p>{prepared.action === 'install' ? 'Selected folders will be copied to this destination:' : prepared.action === 'update' ? 'The existing complete folders will move to the system trash before replacements are placed:' : 'Selected complete folders will move to the system trash from:'}</p><code>{prepared.destinationPath}</code>
     </div>
     {#if prepared.action !== 'install'}
-      <div class="dialog-warning"><strong>Recovery and refresh</strong><p>The operating system controls trash retention. Restore items manually from the system trash; external harnesses may need a refresh or restart.</p></div>
+      <div class="dialog-warning"><strong>Recovery and refresh</strong><p>Items stay in the system trash for as long as your operating system keeps them; restore them from there if needed. Other harness apps may need a refresh or restart to notice the change.</p></div>
     {/if}
     {#if prepared.warnings.length}
       <div class="dialog-warning"><strong>Review these warnings</strong>
@@ -40,7 +40,7 @@
       <div class="dialog-skipped"><strong>Skipped selections</strong>{#each prepared.skipped as item}<p>{item}</p>{/each}</div>
     {/if}
     {#if prepared.eligible.some((skill) => skill.linkWarnings.length)}
-      <label class="link-acknowledgement"><input type="checkbox" bind:checked={acknowledgeLinks} disabled={running} /> I reviewed the listed links and junctions. Copies materialize linked content; recycling removes link entries while preserving their targets.</label>
+      <label class="link-acknowledgement"><input type="checkbox" bind:checked={acknowledgeLinks} disabled={running} /> I reviewed the listed links and junctions. Their contents will be copied as normal files. Moving to the trash removes only the link itself, not the folder or file it points to.</label>
     {/if}
     {#if events.length}
       <div class="operation-log" role="log" aria-live="polite">
