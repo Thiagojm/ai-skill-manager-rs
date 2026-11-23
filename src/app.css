@@ -84,6 +84,8 @@ footer { flex-shrink: 0; display: flex; justify-content: space-between; padding:
 .source-copy code { max-width: 100%; text-overflow: ellipsis; color: var(--accent); font-size: 12px; }
 .path-disclosure { min-width: 0; font-size: 12px; color: var(--muted); }
 .path-disclosure summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.path-disclosure[open] .path-preview,
+.path-disclosure:not([open]) .path-hide-label { display: none; }
 .path-full { display: flex; gap: 6px; align-items: flex-start; margin-top: 4px; }
 .path-disclosure code { min-width: 0; flex: 1; display: block; max-height: 64px; overflow: auto; white-space: normal; overflow-wrap: anywhere; }
 
@@ -111,7 +113,7 @@ footer { flex-shrink: 0; display: flex; justify-content: space-between; padding:
 .notice-icon { flex: 0 0 18px; margin-top: 1px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; font-size: 12px; font-weight: 800; }
 .notice-error { border: 1px solid color-mix(in srgb, var(--red) 32%, transparent); background: color-mix(in srgb, var(--red) 9%, var(--panel)); color: var(--red); }
 .notice-error .notice-icon { color: var(--panel); background: var(--red); }
-.notice-error small { display: block; margin-top: 4px; opacity: .8; overflow-wrap: anywhere; }
+.notice-error small { display: block; margin-top: 4px; overflow-wrap: anywhere; }
 .notice-info { color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent); background: color-mix(in srgb, var(--amber) 7%, var(--panel)); }
 .notice-info .notice-icon { border: 1px solid currentColor; }
 .scan-notices { display: grid; gap: 8px; margin-top: 6px; }

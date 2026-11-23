@@ -380,7 +380,8 @@ fn compare_harness(
                 settings::harness_label(settings, harness).unwrap_or(harness)
             )
         })?;
-    let resolved_source_path = source.as_deref().map(resolve_path).transpose()?;
+    // Keep the revision bound to the source target captured for this inventory.
+    let resolved_source_path = cache.parent.as_ref().map(|(_, resolved)| resolved.clone());
     let resolved_destination_path = resolve_path(&destination)?;
     let mut warnings = Vec::new();
     let mut source_skills = cache.skills.clone();

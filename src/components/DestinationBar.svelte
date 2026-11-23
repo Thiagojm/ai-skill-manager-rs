@@ -18,7 +18,19 @@
 </script>
 
 <div class="destination-bar">
-  <div class="destination-label"><span class="eyebrow">Managed destination</span><details class="path-disclosure"><summary title={path}>{formatPath(path)}</summary><div class="path-full"><code>{formatPath(path)}</code>{#if path}<button class="icon-button icon-button-small" type="button" aria-label="Copy destination path" title="Copy path" onclick={onCopy}><Icon name="copy" size={14} /></button>{/if}</div></details></div>
+  <div class="destination-label">
+    <span class="eyebrow">Managed destination</span>
+    <details class="path-disclosure">
+      <summary>
+        <span class="path-preview" title={path}>{formatPath(path)}</span>
+        <span class="path-hide-label">Hide destination path</span>
+      </summary>
+      <div class="path-full">
+        <code>{formatPath(path)}</code>
+        {#if path}<button class="icon-button icon-button-small" type="button" aria-label="Copy destination path" title="Copy path" onclick={onCopy}><Icon name="copy" size={14} /></button>{/if}
+      </div>
+    </details>
+  </div>
   <div class="destination-actions">
     <button class="button button-secondary" type="button" aria-pressed={overviewShown} onclick={onOverview} {disabled}>Overview</button>
     <button class="button button-secondary" type="button" onclick={onChoose} {disabled}>Choose destination…</button>

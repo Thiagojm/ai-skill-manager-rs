@@ -1166,6 +1166,53 @@ mod tests {
     }
 
     #[test]
+    fn retargeted_source_alias_during_scan_keeps_the_inventoried_baseline() {
+        let _test_guard = test_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        let alias = temp.path().join("source-alias");
+        let destination = temp.path().join("destination");
+        skill(&first, "Same", b"identical bytes");
+        skill(&second, "Same", b"identical bytes");
+        source_alias(&first, &alias);
+        let settings_now = Settings {
+            source: Some(alias.clone()),
+            destinations: [("codex".to_string(), destination)].into_iter().collect(),
+            ..Settings::default()
+        };
+
+        let response = manager::scan_cached_progress(
+            &settings_now,
+            "codex",
+            &mut manager::SourceCache::default(),
+            false,
+            &|event| {
+                if event.stage == "source" && event.completed == 1 {
+                    remove_source_alias(&alias);
+                    source_alias(&second, &alias);
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            response.resolved_source_path,
+            Some(first.canonicalize().unwrap())
+        );
+        record_scan(&response, begin_scan());
+
+        let error = prepare_operation(
+            &settings_now,
+            "codex".to_string(),
+            &response.revision,
+            OperationAction::Install,
+            &["Same".into()],
+        )
+        .unwrap_err();
+        assert!(error.contains("changed or overlaps after this scan"));
+    }
+
+    #[test]
     fn staged_corruption_is_detected_and_cleanup_stays_in_owned_directory() {
         let _test_guard = test_lock();
         let temp = tempfile::tempdir().unwrap();

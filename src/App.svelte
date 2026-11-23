@@ -96,6 +96,7 @@
   let wideNavigation = window.matchMedia('(min-width: 1101px)').matches
   let harnessNavigation: HTMLElement
   let searchInput: HTMLInputElement
+  let overviewSearchInput: HTMLInputElement
   const statuses = ['all', 'missing', 'different', 'identical', 'installed_only', 'invalid_source', 'ambiguous', 'error']
   $: statusCounts = countStatuses(scan?.skills ?? [])
   $: visibleNames = new Set(filteredSkills.map((skill) => skill.folderName))
@@ -126,12 +127,13 @@
       if (transferFocus) harnessNavigation?.querySelector<HTMLElement>('[aria-current="true"], select')?.focus()
     }
     const shortcut = (event: KeyboardEvent) => {
-      if (!event.ctrlKey || event.key.toLowerCase() !== 'f' || !searchInput?.isConnected || document.querySelector('dialog[open]')) return
+      const input = showOverview ? overviewSearchInput : searchInput
+      if (!event.ctrlKey || event.key.toLowerCase() !== 'f' || !input?.isConnected || document.querySelector('dialog[open]')) return
       const target = event.target
-      if (target instanceof HTMLElement && target !== searchInput && target.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (target instanceof HTMLElement && target !== input && target.closest('input, textarea, select, [contenteditable="true"]')) return
       event.preventDefault()
-      searchInput?.focus()
-      searchInput?.select()
+      input.focus()
+      input.select()
     }
     media.addEventListener('change', change)
     window.addEventListener('keydown', shortcut)
@@ -193,6 +195,7 @@
       overview = await scanOverview((event) => { if (overviewRunning) scanProgress = event })
       overviewOutdated = false
     } catch (error) {
+      markOverviewOutdated()
       loadError = String(error)
     } finally {
       overviewRunning = false
@@ -213,7 +216,7 @@
       search = ''
       statusFilter = 'all'
       await refresh()
-    } else await switchHarness(harness)
+    } else await switchHarness(harness, false)
     if (activeHarness !== harness || !scan) return
     if (scan.skills.some((skill) => skill.folderName === folder)) {
       focusedFolder = folder
@@ -469,7 +472,7 @@
     } finally { saving = false }
   }
 
-  async function switchHarness(harness: Harness) {
+  async function switchHarness(harness: Harness, reuseSource = true) {
     if (harness === activeHarness || controlsDisabled || !harnesses.some((item) => item.id === harness)) return
     activeHarness = harness
     search = ''
@@ -477,7 +480,7 @@
     focusedFolder = ''
     scan = null
     stale = false
-    await refresh(true)
+    await refresh(reuseSource)
   }
 
   function toggleSelection(skill: SkillRow) {
@@ -633,7 +636,7 @@
       <div class="workspace-content">
       <DestinationBar path={destinationPath} descriptor={activeDescriptor} warnings={scan?.warnings ?? []} disabled={controlsDisabled} onCopy={() => copyPath(destinationPath, 'Destination path')} onChoose={chooseDestination} onEnterPath={() => enterPath('destination')} onManage={openManageDialog} onOpen={openDestination} overviewShown={showOverview} onOverview={toggleOverview} />
       {#if showOverview}
-        <OverviewMatrix {overview} {harnesses} {statuses} outdated={overviewOutdated} running={overviewRunning} disabled={controlsDisabled} onRefresh={runOverview} onOpen={openFromOverview} />
+        <OverviewMatrix {overview} {harnesses} {statuses} bind:searchInput={overviewSearchInput} outdated={overviewOutdated} running={overviewRunning} disabled={controlsDisabled} onRefresh={runOverview} onOpen={openFromOverview} />
       {:else}
       <div id="comparison-panel" class="comparison-panel" aria-label="Skills comparison">
         <SkillList {filteredSkills} {statuses} {statusCounts} bind:search bind:statusFilter bind:focusedFolder bind:searchInput {selectedNames} {selectedCount} {hiddenSelectedCount} {allFilteredSelected} {installSelectedCount} {updateSelectedCount} {uninstallSelectedCount} {stale} {loading} {controlsDisabled} hasScan={!!scan} needsSource={!settings.source && !(scan?.skills.length)} harnessLabel={labelFor(activeHarness)} onPrepare={prepareAction} onRefresh={() => refresh(false, true)} onChangeSelection={changeSelection} onToggle={toggleSelection} />

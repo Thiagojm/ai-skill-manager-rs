@@ -6,6 +6,7 @@
   export let overview: OverviewResponse | null
   export let harnesses: HarnessDescriptor[]
   export let statuses: string[]
+  export let searchInput: HTMLInputElement
   export let outdated: boolean
   export let running: boolean
   export let disabled: boolean
@@ -68,7 +69,7 @@
   </div>
   {#if outdated}<p class="notice notice-info overview-outdated"><span class="notice-icon"><Icon name="info" size={12} /></span>This overview is outdated. Refresh to update it.</p>{/if}
   <div class="filters">
-    <label class="search-field"><Icon name="search" /><span class="sr-only">Search overview</span><input bind:value={search} placeholder="Search skills…" /></label><span class="result-count">{filtered.length} {filtered.length === 1 ? 'result' : 'results'}</span>
+    <label class="search-field"><Icon name="search" /><span class="sr-only">Search overview</span><input bind:this={searchInput} bind:value={search} placeholder="Search skills…" /></label><span class="result-count">{filtered.length} {filtered.length === 1 ? 'result' : 'results'}</span>
   </div>
   <div class="status-filters" aria-label="Filter by status">
     {#each [...statuses, 'not_present'].filter((status) => status === 'all' || status === statusFilter || counts[status]) as status}

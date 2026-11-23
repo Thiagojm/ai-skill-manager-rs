@@ -15,7 +15,16 @@
   <div class="source-copy">
     <h1 id="source-title">Skill library</h1>
     {#if !source}<p>Choose a parent folder containing skill folders.</p>{/if}
-    <details class="path-disclosure"><summary title={source ?? ''}>{source || 'Choose a folder containing skills'}</summary><div class="path-full"><code>{formatPath(source)}</code>{#if source}<button class="icon-button icon-button-small" type="button" aria-label="Copy skill library path" title="Copy path" onclick={onCopy}><Icon name="copy" size={14} /></button>{/if}</div></details>
+    <details class="path-disclosure">
+      <summary>
+        <span class="path-preview" title={source ?? ''}>{source || 'Choose a folder containing skills'}</span>
+        <span class="path-hide-label">Hide library path</span>
+      </summary>
+      <div class="path-full">
+        <code>{formatPath(source)}</code>
+        {#if source}<button class="icon-button icon-button-small" type="button" aria-label="Copy skill library path" title="Copy path" onclick={onCopy}><Icon name="copy" size={14} /></button>{/if}
+      </div>
+    </details>
   </div>
   <div class="destination-actions"><button class="button button-primary" type="button" onclick={onChoose} {disabled}>
     <Icon name="plus" /> Choose folder…
